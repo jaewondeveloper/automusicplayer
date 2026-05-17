@@ -1,0 +1,15 @@
+config.json
+playlist.json
+uploads/*
+!uploads/.gitkeep
+assets/*
+!assets/.gitkeep
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+WebView2Runtime/
+_wv2_unpack/
+dist/
+build/
