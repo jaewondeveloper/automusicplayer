@@ -15,7 +15,6 @@ _YT_URL_PATTERNS = (
     re.compile(r"youtube\.com/live/([a-zA-Z0-9_-]{11})"),
 )
 
-<<<<<<< HEAD
 _YT_EXTRACTOR_ARGS = {
     "youtube": {
         "player_client": ["android", "web", "ios"],
@@ -29,8 +28,6 @@ _YT_FORMAT_CANDIDATES = (
     "best"
 )
 
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
 
 def parse_youtube_video_id(value: str) -> str | None:
     """URL 또는 11자리 영상 ID → video id."""
@@ -46,7 +43,6 @@ def parse_youtube_video_id(value: str) -> str | None:
     return None
 
 
-<<<<<<< HEAD
 def _base_ydl_opts() -> dict[str, Any]:
     return {
         "quiet": True,
@@ -56,17 +52,11 @@ def _base_ydl_opts() -> dict[str, Any]:
     }
 
 
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
 def fetch_youtube_video_meta(video_id: str) -> dict[str, Any]:
     """제목·썸네일·길이(초) 조회."""
     if not video_id:
         raise ValueError("video_id 필요")
-<<<<<<< HEAD
     ydl_opts = _base_ydl_opts()
-=======
-    ydl_opts = {"quiet": True, "no_warnings": True, "skip_download": True}
->>>>>>> 64f892986127762709046792be1005edd576e304
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(
             f"https://www.youtube.com/watch?v={video_id}", download=False
@@ -87,7 +77,6 @@ def fetch_youtube_video_meta(video_id: str) -> dict[str, Any]:
         "thumbnail": thumb,
         "duration": max(0.0, duration),
     }
-<<<<<<< HEAD
 
 
 def _format_score(fmt: dict[str, Any]) -> tuple[int, int, int]:
@@ -188,5 +177,3 @@ def fetch_youtube_stream_info(video_id: str) -> dict[str, Any]:
     if last_error:
         raise last_error
     raise ValueError("스트림을 가져오지 못했습니다")
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304

@@ -10,10 +10,7 @@ import sys
 import threading
 import time
 
-<<<<<<< HEAD
 import cloudflare_sync
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
 from app_icon_util import apply_windows_app_identity, ensure_app_icon_ico
 from panel_log import install_crash_logging, panel_log_path, setup_panel_logging
 from webview2_runtime import configure_bundled_webview2
@@ -21,14 +18,9 @@ from app_meta import APP_NAME
 from broadcast_window import close_broadcast_window
 from config_store import load_config
 from network_utils import panel_urls
-<<<<<<< HEAD
 from panel_window import enqueue_panel_window_command, run_on_main_thread, run_panel_native, stop_panel_window
 from playlist_store import load_playlist, save_playlist
 from server import auto_setup_admin, broadcast_state, create_socketio_app, set_broadcast_queue, start_server_thread
-=======
-from panel_window import run_panel_native, stop_panel_window
-from server import create_socketio_app, set_broadcast_queue, start_server_thread
->>>>>>> 64f892986127762709046792be1005edd576e304
 from single_instance import ensure_single_instance
 from tray_icon import start_tray_thread, stop_tray
 
@@ -36,7 +28,6 @@ _command_queue: queue.Queue = queue.Queue()
 _shutting_down = False
 
 
-<<<<<<< HEAD
 def _schedule_open_broadcast(display_index: int, port: int) -> None:
     """방송 창은 Win32 메인 스레드에서 연다 (백그라운드 스레드·MessageBox 오류 방지)."""
 
@@ -129,8 +120,6 @@ def _schedule_external_youtube(
     run_on_main_thread(_open_on_main_thread)
 
 
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
 def _process_commands(port: int) -> None:
     while not _shutting_down:
         try:
@@ -138,7 +127,6 @@ def _process_commands(port: int) -> None:
         except queue.Empty:
             continue
         action = cmd.get("action")
-<<<<<<< HEAD
         try:
             if action == "open_broadcast":
                 display_index = int(cmd.get("display_index", 0))
@@ -155,39 +143,14 @@ def _process_commands(port: int) -> None:
                 )
         except Exception:
             setup_panel_logging().error("command %s failed", action, exc_info=True)
-=======
-        if action == "open_broadcast":
-            from broadcast_window import get_broadcast_pid, open_broadcast_window
-            from panel_window import enqueue_panel_window_command
-            from win_desktop import focus_process_main_window, minimize_other_windows
-
-            display_index = int(cmd.get("display_index", 0))
-            enqueue_panel_window_command("minimize")
-            time.sleep(0.25)
-            minimize_other_windows(set())
-            open_broadcast_window(display_index, port)
-            pid = get_broadcast_pid()
-            if pid:
-                threading.Thread(
-                    target=focus_process_main_window,
-                    args=(pid,),
-                    daemon=True,
-                ).start()
-        elif action == "close_broadcast":
-            close_broadcast_window()
->>>>>>> 64f892986127762709046792be1005edd576e304
 
 
 def _command_worker(port: int) -> None:
     while not _shutting_down:
-<<<<<<< HEAD
         try:
             _process_commands(port)
         except Exception:
             setup_panel_logging().error("command worker error", exc_info=True)
-=======
-        _process_commands(port)
->>>>>>> 64f892986127762709046792be1005edd576e304
         time.sleep(0.05)
 
 
@@ -207,12 +170,9 @@ def main() -> None:
     ensure_app_icon_ico()
     configure_bundled_webview2()
 
-<<<<<<< HEAD
     # Auto-create admin/1234 account — skip onboarding entirely
     auto_setup_admin()
 
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
     cfg = load_config()
     port = int(cfg.get("port", 8765))
 
@@ -224,7 +184,6 @@ def main() -> None:
 
     threading.Thread(target=_command_worker, args=(port,), daemon=True).start()
 
-<<<<<<< HEAD
     # Auto-pull playlist & settings from Cloudflare D1 on startup
     if cfg.get("cf_auto_pull_on_start", True) and cloudflare_sync.is_configured(cfg):
         def _on_pull(pl, settings):
@@ -233,8 +192,6 @@ def main() -> None:
             setup_panel_logging().info("CF auto-pull: %d songs loaded from D1", len(pl))
         cloudflare_sync.pull_background(cfg, _on_pull)
 
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
     urls = panel_urls(port)
     panel_addr = urls["primary_lan"] or urls["local"]
     if not getattr(sys, "frozen", False):

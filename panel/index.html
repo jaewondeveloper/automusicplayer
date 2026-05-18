@@ -27,7 +27,6 @@
         <h1 class="sidebar-title">3세대 음방시스템</h1>
         <p class="sidebar-sub">학교 방송 컨트롤</p>
       </div>
-<<<<<<< HEAD
       <div class="card cf-sync-card" id="cfSyncCard">
         <h2 class="server-card-title">☁️ 클라우드 동기화</h2>
         <div class="lan-mini" id="lanAccessBox">
@@ -45,20 +44,6 @@
         <p class="cf-not-configured hint" id="cfNotConfigured" hidden>
           ⚠️ 클라우드 연동에 실패했습니다. 인터넷 연결을 확인해 주세요.
         </p>
-=======
-      <p class="lan-hint lan-hint-top" id="lanHint">네트워크 정보 불러오는 중…</p>
-
-      <div class="card server-card">
-        <h2 class="server-card-title">서버 상태</h2>
-        <p class="server-status" id="serverStatus">상태 확인 중…</p>
-        <div class="lan-mini" id="lanBanner" hidden>
-          <p class="lan-mini-label">다른 기기 접속</p>
-          <p class="lan-mini-url" id="lanUrl"></p>
-          <button type="button" class="btn-secondary btn-sm btn-block" id="btnCopyLan">주소 복사</button>
-        </div>
-        <button type="button" class="btn-primary btn-block" id="btnSyncNetwork">동기화</button>
-        <p class="hint server-sync-hint">Wi-Fi가 바뀌었을 때 눌러 주세요.</p>
->>>>>>> 64f892986127762709046792be1005edd576e304
       </div>
 
       <nav class="sidebar-nav" role="tablist">
@@ -130,16 +115,9 @@
             <button type="button" class="btn-primary btn-block" id="btnChangePassword">비밀번호 변경</button>
           </div>
           <div class="card card-danger">
-<<<<<<< HEAD
             <h2 class="section-title">DB 계정 초기화</h2>
             <p class="hint">로컬 계정을 <strong>admin / 1234</strong>로 초기화합니다. 웹 관리 포털과 동일한 계정으로 재설정됩니다.</p>
             <button type="button" class="btn-danger btn-block" id="btnResetAccount">초기화</button>
-=======
-            <h2 class="section-title">계정 초기화</h2>
-            <p class="hint">관리자 계정을 삭제하고 최초 설정 화면으로 돌아갑니다. 온보딩 안내가 다시 표시됩니다.</p>
-            <input type="password" id="resetAccountPassword" class="input" placeholder="현재 비밀번호 확인" />
-            <button type="button" class="btn-danger btn-block" id="btnResetAccount">계정 초기화</button>
->>>>>>> 64f892986127762709046792be1005edd576e304
           </div>
           <div class="card">
             <h2 class="section-title">방송 브라우저</h2>
@@ -158,7 +136,6 @@
               <input type="checkbox" id="autostartToggle" class="toggle" />
             </label>
           </div>
-<<<<<<< HEAD
           <div class="card">
             <h2 class="section-title">☁️ Cloudflare 연동 설정</h2>
             <p class="hint" style="margin-bottom:.75rem">서버: <strong>auto-music-player-backend.rukkit.workers.dev</strong></p>
@@ -169,8 +146,6 @@
             <button type="button" class="btn-primary btn-block" id="btnSaveCfConfig">설정 저장</button>
             <p class="hint cf-save-hint" id="cfSaveHint"></p>
           </div>
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
           <p class="settings-credit">Made by 신재원, 정규환</p>
         </section>
       </main>
@@ -178,7 +153,6 @@
       <footer class="control-bar">
         <div class="now-playing">
           <p class="now-title" id="nowTitle">재생 중인 곡 없음</p>
-<<<<<<< HEAD
           <div
             class="progress-track"
             id="progressTrack"
@@ -188,9 +162,6 @@
             aria-valuemax="100"
             aria-valuenow="0"
           >
-=======
-          <div class="progress-track">
->>>>>>> 64f892986127762709046792be1005edd576e304
             <div class="progress-fill" id="progressFill"></div>
           </div>
         </div>
@@ -205,11 +176,7 @@
     </div>
   </div>
 
-<<<<<<< HEAD
   <div class="modal-overlay modal-overlay-priority" id="broadcastWarnModal" hidden>
-=======
-  <div class="modal-overlay" id="broadcastWarnModal" hidden>
->>>>>>> 64f892986127762709046792be1005edd576e304
     <div class="modal card modal-wide">
       <h2>자동 방송 안내</h2>
       <div class="warn-body">
@@ -232,11 +199,7 @@
     </div>
   </div>
 
-<<<<<<< HEAD
   <div class="modal-overlay modal-overlay-priority" id="displayModal" hidden>
-=======
-  <div class="modal-overlay" id="displayModal" hidden>
->>>>>>> 64f892986127762709046792be1005edd576e304
     <div class="modal card">
       <h2>방송 화면 디스플레이</h2>
       <ul id="displayList" class="display-list"></ul>
@@ -262,22 +225,14 @@
               <li><strong>곡 추가</strong>에서 YouTube 검색·링크 또는 로컬 파일로 플레이리스트를 만듭니다.</li>
               <li><strong>플레이리스트</strong>에서 순서를 드래그해 바꿀 수 있습니다.</li>
               <li><strong>방송</strong> 버튼으로 방송 화면을 켜고 재생을 시작합니다.</li>
-<<<<<<< HEAD
               <li>같은 Wi-Fi의 다른 기기는 왼쪽 <strong>접속 주소</strong>로 패널에 접속할 수 있습니다.</li>
-=======
-              <li>같은 Wi-Fi의 다른 기기는 왼쪽 <strong>서버 상태</strong>의 주소로 접속할 수 있습니다.</li>
->>>>>>> 64f892986127762709046792be1005edd576e304
             </ol>
           </section>
           <section class="onboarding-slide">
             <h2>주의사항</h2>
             <ul class="onboarding-list">
               <li>방송 PC 앱에 <strong>로그인</strong>해야 방송 제어가 가능합니다.</li>
-<<<<<<< HEAD
               <li>Wi-Fi가 바뀌면 앱을 다시 실행하거나 페이지를 새로고침해 접속 주소를 확인하세요.</li>
-=======
-              <li>Wi-Fi가 바뀌면 왼쪽 <strong>동기화</strong> 버튼으로 접속 주소를 갱신하세요.</li>
->>>>>>> 64f892986127762709046792be1005edd576e304
               <li>자동 방송 중에는 YouTube 화면에서 타임라인·건너뛰기를 하지 마세요.</li>
               <li>이전/다음·일시정지·종료는 반드시 이 패널에서 조작하세요.</li>
             </ul>

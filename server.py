@@ -5,11 +5,8 @@ import queue
 import secrets
 import threading
 import time
-<<<<<<< HEAD
 import urllib.error
 import urllib.request
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -18,10 +15,7 @@ from typing import Any, Callable
 import bcrypt
 from flask import (
     Flask,
-<<<<<<< HEAD
     Response,
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
     jsonify,
     redirect,
     render_template_string,
@@ -35,10 +29,7 @@ from flask_wtf import CSRFProtect
 from flask_wtf.csrf import generate_csrf
 from werkzeug.utils import secure_filename
 
-<<<<<<< HEAD
 import cloudflare_sync
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
 from config_store import (
     ALLOWED_UPLOAD_EXT,
     ASSETS_DIR,
@@ -55,15 +46,11 @@ from panel_window import enqueue_panel_window_command
 from playlist_store import load_playlist, save_playlist
 from state import BroadcastState
 from youtube_search import search_youtube
-<<<<<<< HEAD
 from youtube_util import (
     fetch_youtube_stream_info,
     fetch_youtube_video_meta,
     parse_youtube_video_id,
 )
-=======
-from youtube_util import fetch_youtube_video_meta, parse_youtube_video_id
->>>>>>> 64f892986127762709046792be1005edd576e304
 
 # --- 전역 ---
 broadcast_state = BroadcastState()
@@ -72,11 +59,8 @@ login_attempts: dict[str, dict[str, Any]] = {}
 broadcast_command_queue: queue.Queue | None = None
 _panel_sids: set[str] = set()
 _panel_sids_lock = threading.Lock()
-<<<<<<< HEAD
 _yt_stream_cache: dict[str, dict[str, Any]] = {}
 _yt_stream_cache_lock = threading.Lock()
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
 
 app = Flask(
     __name__,
@@ -232,7 +216,6 @@ def _emit_broadcast_track() -> None:
     socketio.emit("load_track", snap, namespace="/broadcast")
 
 
-<<<<<<< HEAD
 def _cache_youtube_stream(video_id: str) -> dict[str, Any]:
     with _yt_stream_cache_lock:
         cached = _yt_stream_cache.get(video_id)
@@ -295,8 +278,6 @@ def finish_external_youtube_playback(finished_index: int | None = None) -> None:
         socketio.emit("broadcast_ended", {}, namespace="/broadcast")
 
 
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
 def _notify_broadcast(title: str, event: str) -> None:
     socketio.emit(event, {"title": title}, namespace="/broadcast")
 
@@ -319,7 +300,6 @@ def _fetch_youtube_duration(video_id: str) -> float:
         return 0.0
 
 
-<<<<<<< HEAD
 def auto_setup_admin() -> None:
     """앱 시작 시 admin/1234 계정이 없으면 자동 생성 (온보딩 스킵)."""
     cfg = load_config()
@@ -331,8 +311,6 @@ def auto_setup_admin() -> None:
         save_config(cfg)
 
 
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
 def init_app(cfg: dict[str, Any]) -> None:
     global config_data
     config_data = cfg
@@ -398,7 +376,6 @@ def broadcast_page():
     return render_template_string(_read_broadcast_html())
 
 
-<<<<<<< HEAD
 @csrf.exempt
 @app.route("/api/youtube/stream/<video_id>")
 def api_youtube_stream_proxy(video_id: str):
@@ -454,8 +431,6 @@ def api_youtube_stream_proxy(video_id: str):
     return response
 
 
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
 @app.route("/api/csrf-token")
 def api_csrf():
     return jsonify({"csrf_token": generate_csrf()})
@@ -642,7 +617,6 @@ def api_change_password():
 
 @app.route("/api/settings/reset-account", methods=["POST"])
 def api_reset_account():
-<<<<<<< HEAD
     """DB 계정 초기화 — 로컬 계정을 admin/1234로 리셋하고 재로그인."""
     cfg = load_config()
     pw_hash = bcrypt.hashpw(b"1234", bcrypt.gensalt(rounds=12))
@@ -656,27 +630,6 @@ def api_reset_account():
     logout_user()
     _emit_panel_session_status()
     return jsonify({"ok": True, "redirect": "/login"})
-=======
-    """관리자 계정 초기화 → 최초 설정 화면으로."""
-    if not current_user.is_authenticated:
-        return jsonify({"error": "unauthorized"}), 401
-    data = request.get_json(silent=True) or {}
-    current_pw = (data.get("password") or "").encode("utf-8")
-    cfg = load_config()
-    if not cfg.get("password_hash"):
-        return jsonify({"error": "설정된 계정이 없습니다"}), 400
-    if not bcrypt.checkpw(current_pw, cfg["password_hash"].encode("utf-8")):
-        return jsonify({"error": "비밀번호가 올바르지 않습니다"}), 400
-    cfg["admin_username"] = ""
-    cfg["password_hash"] = ""
-    cfg["onboarding_complete"] = False
-    save_config(cfg)
-    _disconnect_panel_clients()
-    _stop_broadcast_playback()
-    logout_user()
-    _emit_panel_session_status()
-    return jsonify({"ok": True})
->>>>>>> 64f892986127762709046792be1005edd576e304
 
 
 @app.route("/api/youtube/from-url", methods=["POST"])
@@ -873,7 +826,6 @@ def assets_file(filename):
     return send_from_directory(ASSETS_DIR, safe)
 
 
-<<<<<<< HEAD
 # --- Cloudflare Sync (browser-direct approach) ---
 
 @csrf.exempt
@@ -1012,8 +964,6 @@ def cf_pull():
     })
 
 
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
 # --- SocketIO ---
 
 
@@ -1115,7 +1065,6 @@ def on_control(data):
     display_index = int(data.get("display_index", 0))
     playback_actions = {"start", "play", "pause", "next", "prev", "stop"}
 
-<<<<<<< HEAD
     if action == "seek":
         if not _broadcast_playback_allowed():
             return _deny_broadcast_control("앱에 로그인되어 있어야 방송을 제어할 수 있습니다.")
@@ -1133,8 +1082,6 @@ def on_control(data):
         )
         return
 
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
     if action in playback_actions and not _broadcast_playback_allowed():
         if not _has_panel_client():
             return _deny_broadcast_control(
@@ -1194,7 +1141,6 @@ def on_request_stop(_data=None):
     socketio.emit("broadcast_ended", {}, namespace="/broadcast")
 
 
-<<<<<<< HEAD
 @socketio.on("youtube_embed_blocked", namespace="/broadcast")
 def on_youtube_embed_blocked(data=None):
     """퍼가기 금지 — yt-dlp 스트림을 방송 화면 <video>로 재생 (진행률·종료 감지)."""
@@ -1259,8 +1205,6 @@ def on_youtube_embed_blocked(data=None):
     threading.Thread(target=worker, daemon=True).start()
 
 
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
 @socketio.on("song_finished", namespace="/broadcast")
 def on_song_finished(data=None):
     """방송 화면에서 곡 종료 시 — 다음 곡 또는 방송 종료 화면."""

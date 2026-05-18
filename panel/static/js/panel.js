@@ -21,7 +21,6 @@
     return h === "127.0.0.1" || h === "localhost";
   }
 
-<<<<<<< HEAD
   /** 네이티브 앱 패널(로그인 후 index) — 소켓 대기 없이 방송 UI 허용 */
   function isNativePanelSession() {
     return isLocalAppView();
@@ -38,8 +37,6 @@
   let playbackDurationSec = 0;
   let isScrubbingProgress = false;
 
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
   async function fetchCsrf() {
     const res = await fetch("/api/csrf-token", { credentials: "same-origin" });
     const data = await res.json();
@@ -58,12 +55,8 @@
       currentIndex = data.index;
       const title = data.title || "재생 중인 곡 없음";
       $("#nowTitle").textContent = title;
-<<<<<<< HEAD
       playbackCurrentSec = 0;
       if (!isScrubbingProgress) updateProgressBar(0, playbackDurationSec);
-=======
-      $("#progressFill").style.width = "0%";
->>>>>>> 64f892986127762709046792be1005edd576e304
       renderPlaylist();
     });
 
@@ -94,27 +87,17 @@
       if (typeof data.index === "number" && data.index >= 0) {
         currentIndex = data.index;
       }
-<<<<<<< HEAD
       playbackCurrentSec = Number(data.current) || 0;
       playbackDurationSec = Number(data.duration) || 0;
       if (!isScrubbingProgress) {
         updateProgressBar(playbackCurrentSec, playbackDurationSec);
       }
-=======
-      const pct = Math.min(100, Math.max(0, (data.current / data.duration) * 100));
-      $("#progressFill").style.width = `${pct}%`;
->>>>>>> 64f892986127762709046792be1005edd576e304
     });
 
     socket.on("connect", () => {
       socketConnected = true;
-<<<<<<< HEAD
       broadcastAllowed = true;
       setControlsEnabled(true);
-=======
-      broadcastAllowed = false;
-      setControlsEnabled(false);
->>>>>>> 64f892986127762709046792be1005edd576e304
       socket.emit("get_state", {});
       updateServerStatus();
     });
@@ -141,20 +124,14 @@
     socket.on("session_status", (data) => {
       if (data && typeof data.broadcast_allowed === "boolean") {
         broadcastAllowed = data.broadcast_allowed;
-<<<<<<< HEAD
       } else if (socketConnected) {
         broadcastAllowed = true;
       }
       setControlsEnabled(socketConnected);
-=======
-        setControlsEnabled(socketConnected && broadcastAllowed);
-      }
->>>>>>> 64f892986127762709046792be1005edd576e304
       updateServerStatusFromData(data);
     });
   }
 
-<<<<<<< HEAD
   function updateProgressBar(currentSec, durationSec) {
     const fill = $("#progressFill");
     const track = $("#progressTrack");
@@ -226,13 +203,6 @@
     ["btnPrev", "btnPause", "btnNext", "btnStop"].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.disabled = !allowTransport;
-=======
-  function setControlsEnabled(enabled) {
-    const on = enabled && broadcastAllowed;
-    ["btnBroadcastStart", "btnPrev", "btnPause", "btnNext", "btnStop"].forEach((id) => {
-      const el = document.getElementById(id);
-      if (el) el.disabled = !on;
->>>>>>> 64f892986127762709046792be1005edd576e304
     });
   }
 
@@ -398,15 +368,11 @@
   }
 
   function openBroadcastWarnModal() {
-<<<<<<< HEAD
     const modal = $("#broadcastWarnModal");
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
     const ack = $("#broadcastWarnAck");
     const confirmBtn = $("#btnBroadcastWarnConfirm");
     if (ack) ack.checked = false;
     if (confirmBtn) confirmBtn.disabled = true;
-<<<<<<< HEAD
     if (modal) modal.hidden = false;
     preloadDisplays();
     requestAnimationFrame(() => {
@@ -429,9 +395,6 @@
       .finally(() => {
         displaysLoading = null;
       });
-=======
-    $("#broadcastWarnModal").hidden = false;
->>>>>>> 64f892986127762709046792be1005edd576e304
   }
 
   function updateOnboardingUI() {
@@ -625,20 +588,11 @@
     await emitAddSong(data);
   }
 
-<<<<<<< HEAD
   function renderDisplayList(displays) {
     const list = $("#displayList");
     if (!list) return;
     list.innerHTML = "";
     (displays || []).forEach((d) => {
-=======
-  async function loadDisplays() {
-    const res = await fetch("/api/displays", { credentials: "same-origin" });
-    const data = await res.json();
-    const list = $("#displayList");
-    list.innerHTML = "";
-    (data.displays || []).forEach((d) => {
->>>>>>> 64f892986127762709046792be1005edd576e304
       const li = document.createElement("li");
       li.textContent = d.name;
       li.dataset.index = String(d.index);
@@ -652,7 +606,6 @@
     });
   }
 
-<<<<<<< HEAD
   async function loadDisplays() {
     if (displaysCache) {
       renderDisplayList(displaysCache);
@@ -671,11 +624,6 @@
   function openDisplayModal() {
     $("#displayModal").hidden = false;
     void loadDisplays();
-=======
-  function openDisplayModal() {
-    $("#displayModal").hidden = false;
-    loadDisplays();
->>>>>>> 64f892986127762709046792be1005edd576e304
   }
 
   function initControls() {
@@ -697,13 +645,6 @@
     });
 
     $("#btnBroadcastStart").addEventListener("click", () => {
-<<<<<<< HEAD
-=======
-      if (!socketConnected || !broadcastAllowed) {
-        showAppAlert("앱에 로그인되어 있어야 방송을 시작할 수 있습니다.");
-        return;
-      }
->>>>>>> 64f892986127762709046792be1005edd576e304
       if (!playlist.length) {
         showAppAlert("플레이리스트에 곡을 추가해 주세요.");
         return;
@@ -723,21 +664,12 @@
       openDisplayModal();
     });
 
-<<<<<<< HEAD
-=======
-    $("#btnSyncNetwork").addEventListener("click", syncNetwork);
-
->>>>>>> 64f892986127762709046792be1005edd576e304
     $("#btnDisplayCancel").addEventListener("click", () => {
       $("#displayModal").hidden = true;
     });
     $("#btnDisplayConfirm").addEventListener("click", () => {
       $("#displayModal").hidden = true;
-<<<<<<< HEAD
       if (!canUseBroadcastControls()) {
-=======
-      if (!socketConnected || !broadcastAllowed) {
->>>>>>> 64f892986127762709046792be1005edd576e304
         showAppAlert("앱에 로그인되어 있어야 방송을 시작할 수 있습니다.");
         return;
       }
@@ -745,7 +677,6 @@
         showAppAlert("플레이리스트에 곡을 추가해 주세요.");
         return;
       }
-<<<<<<< HEAD
       if (!socket || !socket.connected) {
         showAppAlert("서버 연결 중입니다. 잠시 후 다시 시도해 주세요.");
         return;
@@ -765,11 +696,6 @@
       }
     });
 
-=======
-      socket.emit("control", { action: "start", display_index: selectedDisplay });
-    });
-
->>>>>>> 64f892986127762709046792be1005edd576e304
     $("#btnPause").addEventListener("click", () => {
       const action = playbackStatus === "playing" ? "pause" : "play";
       socket.emit("control", { action });
@@ -862,19 +788,13 @@
 
     $("#btnResetAccount").addEventListener("click", async () => {
       const ok = await showAppConfirm(
-<<<<<<< HEAD
         "로컬 계정을 admin / 1234 로 초기화할까요?",
         { title: "DB 계정 초기화", okText: "초기화", cancelText: "취소" }
-=======
-        "관리자 계정을 초기화할까요?\n다시 최초 설정 화면으로 이동합니다.",
-        { title: "계정 초기화", okText: "초기화", cancelText: "취소" }
->>>>>>> 64f892986127762709046792be1005edd576e304
       );
       if (!ok) return;
       const res = await fetch("/api/settings/reset-account", {
         method: "POST",
         credentials: "same-origin",
-<<<<<<< HEAD
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
@@ -884,33 +804,6 @@
         return;
       }
       showAppAlert(data.error || "초기화 실패");
-=======
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRFToken": csrfToken,
-        },
-        body: JSON.stringify({
-          password: $("#resetAccountPassword").value,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        window.location.href = "/setup";
-        return;
-      }
-      showAppAlert(data.error || "계정 초기화 실패");
-    });
-
-    $("#btnCopyLan").addEventListener("click", async () => {
-      const url = $("#lanUrl").textContent;
-      if (!url) return;
-      try {
-        await navigator.clipboard.writeText(url);
-        showAppAlert("주소가 복사되었습니다.\n" + url, { title: "복사 완료" });
-      } catch (_) {
-        showAppAlert("아래 주소를 복사해 주세요.\n\n" + url, { title: "주소 복사" });
-      }
->>>>>>> 64f892986127762709046792be1005edd576e304
     });
 
     document.querySelectorAll('input[name="broadcastBrowser"]').forEach((radio) => {
@@ -991,7 +884,6 @@
     }
   }
 
-<<<<<<< HEAD
   function formatLanHostPort(url) {
     if (!url) return "";
     try {
@@ -1022,23 +914,6 @@
     const label = formatLanHostPort(full);
     el.textContent = label || "LAN 주소 없음";
     el.title = full || "";
-=======
-  function showLanUrls(data) {
-    const lanList = data.panel_lan || data.lan || [];
-    const primary = data.panel_primary_lan || data.primary_lan || lanList[0] || "";
-    const hint = $("#lanHint");
-    const banner = $("#lanBanner");
-    const urlEl = $("#lanUrl");
-
-    if (primary) {
-      hint.textContent = "다른 기기: " + primary.replace(/^https?:\/\//, "");
-      urlEl.textContent = primary;
-      banner.hidden = false;
-    } else {
-      hint.textContent = "LAN 주소 없음 — PC와 폰이 같은 Wi-Fi인지 확인";
-      banner.hidden = true;
-    }
->>>>>>> 64f892986127762709046792be1005edd576e304
   }
 
   function updateBrowserHint(available) {
@@ -1089,11 +964,7 @@
       'input[name="broadcastBrowser"][value="' + br + '"]'
     );
     if (radio) radio.checked = true;
-<<<<<<< HEAD
     loadBrowserSetting();
-=======
-    await loadBrowserSetting();
->>>>>>> 64f892986127762709046792be1005edd576e304
   }
 
   function updateMobileControlBarInset() {
@@ -1112,7 +983,6 @@
 
   async function init() {
     initTabs();
-<<<<<<< HEAD
     initSocket();
     initControls();
     initProgressScrub();
@@ -1131,24 +1001,10 @@
     updateMobileControlBarInset();
     requestAnimationFrame(updateMobileControlBarInset);
     initCfSync();
-=======
-    setControlsEnabled(false);
-    await fetchCsrf();
-    initSocket();
-    initControls();
-    await loadPublicConfig();
-    await updateServerStatus();
-    await maybeShowOnboarding();
-    setInterval(updateServerStatus, 4000);
-    updatePauseButton();
-    updateMobileControlBarInset();
-    requestAnimationFrame(updateMobileControlBarInset);
->>>>>>> 64f892986127762709046792be1005edd576e304
   }
 
   document.addEventListener("DOMContentLoaded", init);
 })();
-<<<<<<< HEAD
 
 /* ── Cloudflare 동기화 (브라우저 → Worker 직접 호출) ───────────────────── */
 (function () {
@@ -1296,5 +1152,3 @@
   };
 
 })();
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304

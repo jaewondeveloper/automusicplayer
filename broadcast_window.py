@@ -9,30 +9,12 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-<<<<<<< HEAD
 from app_meta import APP_NAME
 from config_store import load_config
 from panel_log import get_logger
 
 _browser_proc: subprocess.Popen | None = None
 _external_yt_proc: subprocess.Popen | None = None
-=======
-from typing import Any
-
-from app_meta import APP_NAME
-from config_store import load_config
-
-_WEBVIEW_OK = False
-try:
-    import webview  # noqa: F401
-
-    _WEBVIEW_OK = True
-except ImportError:
-    pass
-
-_browser_proc: subprocess.Popen | None = None
-_webview_windows: list[Any] = []
->>>>>>> 64f892986127762709046792be1005edd576e304
 
 _CHROMIUM_AUTOPLAY_FLAGS = [
     "--autoplay-policy=no-user-gesture-required",
@@ -46,13 +28,6 @@ _CHROME_EXTRA = [
 ]
 
 
-<<<<<<< HEAD
-=======
-def webview_available() -> bool:
-    return _WEBVIEW_OK
-
-
->>>>>>> 64f892986127762709046792be1005edd576e304
 def _get_monitors():
     try:
         from screeninfo import get_monitors
@@ -65,13 +40,8 @@ def _get_monitors():
         return [_M()]
 
 
-<<<<<<< HEAD
 def _profile_dir(browser_id: str, kind: str = "kiosk") -> str:
     base = Path(tempfile.gettempdir()) / f"eumbang-{browser_id}-{kind}"
-=======
-def _profile_dir(browser_id: str) -> str:
-    base = Path(tempfile.gettempdir()) / f"eumbang-{browser_id}-kiosk"
->>>>>>> 64f892986127762709046792be1005edd576e304
     base.mkdir(parents=True, exist_ok=True)
     return str(base)
 
@@ -103,7 +73,6 @@ def _chrome_paths() -> list[str]:
     return found
 
 
-<<<<<<< HEAD
 def find_edge_for_kiosk() -> str | None:
     """방송 키오스크용 — 설치된 Microsoft Edge만 (WebView2 런타임 exe 제외)."""
     for p in _edge_paths():
@@ -116,12 +85,6 @@ def find_edge() -> str | None:
     exe = find_edge_for_kiosk()
     if exe:
         return exe
-=======
-def find_edge() -> str | None:
-    for p in _edge_paths():
-        if p.is_file():
-            return str(p)
->>>>>>> 64f892986127762709046792be1005edd576e304
     try:
         from webview2_runtime import find_bundled_browser_exe
 
@@ -144,12 +107,8 @@ def list_available_browsers() -> dict[str, bool]:
 
 def resolve_browser_exe(preference: str | None = None) -> tuple[str, str] | None:
     pref = (preference or "auto").lower().strip()
-<<<<<<< HEAD
     edge = find_edge_for_kiosk() or find_edge()
     chrome = find_chrome()
-=======
-    edge, chrome = find_edge(), find_chrome()
->>>>>>> 64f892986127762709046792be1005edd576e304
     if pref == "edge":
         if edge:
             return edge, "edge"
@@ -170,10 +129,7 @@ def resolve_browser_exe(preference: str | None = None) -> tuple[str, str] | None
 
 
 def _show_broadcast_error(msg: str) -> None:
-<<<<<<< HEAD
     get_logger().error("broadcast: %s", msg.replace("\n", " | "))
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
     print(f"[{APP_NAME}] {msg}", file=sys.stderr)
     if sys.platform == "win32":
         try:
@@ -194,22 +150,14 @@ def _is_bundled_edge(exe: str) -> bool:
         return False
 
 
-<<<<<<< HEAD
 def _build_browser_args(
     exe: str, browser_id: str, url: str, m, *, profile_kind: str = "kiosk"
 ) -> list[str]:
-=======
-def _build_browser_args(exe: str, browser_id: str, url: str, m) -> list[str]:
->>>>>>> 64f892986127762709046792be1005edd576e304
     """
     Chrome: --app 과 --kiosk 를 같이 쓰면 전체화면이 깨지므로 URL을 직접 넘김.
     """
     common = [
-<<<<<<< HEAD
         f"--user-data-dir={_profile_dir(browser_id, profile_kind)}",
-=======
-        f"--user-data-dir={_profile_dir(browser_id)}",
->>>>>>> 64f892986127762709046792be1005edd576e304
         "--no-first-run",
         "--no-default-browser-check",
         *_CHROMIUM_AUTOPLAY_FLAGS,
@@ -240,19 +188,12 @@ def _build_browser_args(exe: str, browser_id: str, url: str, m) -> list[str]:
     return edge_args
 
 
-<<<<<<< HEAD
 def _launch_kiosk_browser(
     url: str,
     display_index: int,
     *,
     profile_kind: str = "kiosk",
 ) -> subprocess.Popen | None:
-=======
-def _open_browser_kiosk(url: str, display_index: int) -> None:
-    global _browser_proc
-    close_broadcast_window()
-
->>>>>>> 64f892986127762709046792be1005edd576e304
     cfg = load_config()
     pref = cfg.get("broadcast_browser", "auto")
     resolved = resolve_browser_exe(pref)
@@ -264,33 +205,21 @@ def _open_browser_kiosk(url: str, display_index: int) -> None:
             "첫 실행 시 런타임 풀기에 실패했습니다.\n"
             "build.bat 으로 다시 빌드한 exe를 사용하세요."
         )
-<<<<<<< HEAD
         return None
-=======
-        return
->>>>>>> 64f892986127762709046792be1005edd576e304
 
     exe, browser_id = resolved
     monitors = _get_monitors()
     idx = min(max(0, display_index), len(monitors) - 1)
     m = monitors[idx]
-<<<<<<< HEAD
     args = _build_browser_args(exe, browser_id, url, m, profile_kind=profile_kind)
 
     try:
         proc = subprocess.Popen(
-=======
-    args = _build_browser_args(exe, browser_id, url, m)
-
-    try:
-        _browser_proc = subprocess.Popen(
->>>>>>> 64f892986127762709046792be1005edd576e304
             args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
         name = "Microsoft Edge" if browser_id == "edge" else "Google Chrome"
-<<<<<<< HEAD
         get_logger().info(
             "kiosk started browser=%s pid=%s display=%s profile=%s url=%s",
             name,
@@ -313,46 +242,11 @@ def _open_browser_kiosk(url: str, display_index: int) -> None:
     if proc:
         _browser_proc = proc
         print(f"[{APP_NAME}] 방송 창: 전체화면 키오스크")
-=======
-        print(f"[{APP_NAME}] 방송 창: {name} 전체화면 키오스크")
-    except OSError as exc:
-        _show_broadcast_error(f"방송 창 실행 실패:\n{exc}")
-
-
-def _open_pywebview(url: str, display_index: int) -> None:
-    global _webview_windows
-    import webview as wv
-
-    close_broadcast_window()
-    monitors = _get_monitors()
-    idx = min(max(0, display_index), len(monitors) - 1)
-    m = monitors[idx]
-
-    win = wv.create_window(
-        f"{APP_NAME} 방송",
-        url,
-        x=m.x,
-        y=m.y,
-        width=m.width,
-        height=m.height,
-        fullscreen=True,
-        frameless=False,
-        on_top=True,
-    )
-    _webview_windows.append(win)
->>>>>>> 64f892986127762709046792be1005edd576e304
 
 
 def open_broadcast_window(display_index: int, port: int) -> None:
     url = f"http://127.0.0.1:{port}/broadcast/?kiosk=1"
-<<<<<<< HEAD
     _open_browser_kiosk(url, display_index)
-=======
-    if _WEBVIEW_OK:
-        _open_pywebview(url, display_index)
-    else:
-        _open_browser_kiosk(url, display_index)
->>>>>>> 64f892986127762709046792be1005edd576e304
 
 
 def get_broadcast_pid() -> int | None:
@@ -365,7 +259,6 @@ def get_broadcast_pid() -> int | None:
         return None
 
 
-<<<<<<< HEAD
 def open_external_youtube_video(video_id: str, display_index: int = 0) -> None:
     """임베드 불가 YouTube — watch 페이지를 별도 키오스크 창에서 재생."""
     global _external_yt_proc
@@ -418,10 +311,6 @@ def close_external_youtube() -> None:
 def close_broadcast_window() -> None:
     global _browser_proc
     close_external_youtube()
-=======
-def close_broadcast_window() -> None:
-    global _browser_proc, _webview_windows
->>>>>>> 64f892986127762709046792be1005edd576e304
 
     if _browser_proc is not None:
         try:
@@ -432,22 +321,7 @@ def close_broadcast_window() -> None:
                 _browser_proc.kill()
             except Exception:
                 pass
-<<<<<<< HEAD
         get_logger().info("broadcast window closed")
         _browser_proc = None
 
-=======
-        _browser_proc = None
-
-    if _WEBVIEW_OK:
-        import webview as wv
-
-        for w in list(_webview_windows):
-            try:
-                w.destroy()
-            except Exception:
-                pass
-        _webview_windows.clear()
-
->>>>>>> 64f892986127762709046792be1005edd576e304
 

@@ -38,7 +38,6 @@ def ensure_dirs() -> None:
     ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-<<<<<<< HEAD
 CF_DEFAULTS: dict[str, Any] = {
     "cloudflare_worker_url": "https://auto-music-player-backend.rukkit.workers.dev",
     "cf_username": "admin",
@@ -48,8 +47,6 @@ CF_DEFAULTS: dict[str, Any] = {
 }
 
 
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
 def load_config() -> dict[str, Any]:
     ensure_dirs()
     if not CONFIG_PATH.exists():
@@ -62,10 +59,7 @@ def load_config() -> dict[str, Any]:
             "autostart": False,
             "broadcast_browser": "auto",
             "onboarding_complete": False,
-<<<<<<< HEAD
             **CF_DEFAULTS,
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
         }
         save_config(cfg)
         return cfg
@@ -77,7 +71,6 @@ def load_config() -> dict[str, Any]:
     if "onboarding_complete" not in data and is_setup_complete(data):
         data["onboarding_complete"] = True
         save_config(data)
-<<<<<<< HEAD
     # Inject CF defaults for existing configs missing them
     changed = False
     for k, v in CF_DEFAULTS.items():
@@ -86,8 +79,6 @@ def load_config() -> dict[str, Any]:
             changed = True
     if changed:
         save_config(data)
-=======
->>>>>>> 64f892986127762709046792be1005edd576e304
     return data
 
 
