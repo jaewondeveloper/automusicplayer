@@ -30,7 +30,10 @@ _lock = threading.Lock()
 _panel_stop = threading.Event()
 _panel_started = False
 _panel_cmd_queue: queue.Queue[str] = queue.Queue()
+<<<<<<< HEAD
 _main_jobs: queue.Queue[tuple[float, Callable[[], None]]] = queue.Queue()
+=======
+>>>>>>> 64f892986127762709046792be1005edd576e304
 
 _PANEL_ASPECT_W = 16
 _PANEL_ASPECT_H = 9
@@ -59,6 +62,7 @@ def enqueue_panel_window_command(action: str) -> None:
     log().debug("queued panel cmd: %s (qsize~%s)", action, _panel_cmd_queue.qsize())
 
 
+<<<<<<< HEAD
 def run_on_main_thread(fn: Callable[[], None], delay: float = 0.0) -> None:
     """패널 Win32 메시지 루프(메인 스레드)에서 fn 실행."""
     run_at = time.monotonic() + max(0.0, delay)
@@ -88,6 +92,8 @@ def _drain_main_jobs() -> None:
             log().error("main-thread job failed", exc_info=True)
 
 
+=======
+>>>>>>> 64f892986127762709046792be1005edd576e304
 def _drain_panel_commands() -> list[str]:
     cmds: list[str] = []
     while True:
@@ -433,7 +439,10 @@ def _make_panel_window_class():
 
                 while not _panel_stop.is_set():
                     self._process_queued_commands()
+<<<<<<< HEAD
                     _drain_main_jobs()
+=======
+>>>>>>> 64f892986127762709046792be1005edd576e304
                     r = win32gui.PeekMessage(None, 0, 0, win32con.PM_REMOVE)
                     code, msg = r
                     if code == 0:
@@ -569,6 +578,7 @@ def run_panel_native(port: int, on_closed: Callable[[], None] | None = None) -> 
         return False
 
     if not configure_bundled_webview2():
+<<<<<<< HEAD
         import sys as _sys
         if getattr(_sys, "frozen", False):
             # Compiled exe — bundled runtime is required
@@ -576,6 +586,10 @@ def run_panel_native(port: int, on_closed: Callable[[], None] | None = None) -> 
             return False
         # Dev mode — warn and continue (system Edge/WebView2 runtime will be used)
         log().warning("Bundled WebView2 runtime not found — falling back to system runtime (dev mode)")
+=======
+        _show_fatal("WebView2 런타임이 없습니다.\n\n" + runtime_status_message())
+        return False
+>>>>>>> 64f892986127762709046792be1005edd576e304
 
     panel_url = resolve_panel_url(port)
     if not _wait_for_server(panel_url):

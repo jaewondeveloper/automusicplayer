@@ -133,6 +133,7 @@ def _apply_win10_fixed_runtime_acl(runtime_dir: Path) -> None:
         pass
 
 
+<<<<<<< HEAD
 def _system_webview2_available() -> bool:
     """Check if system-installed WebView2 (Edge) runtime is present."""
     import winreg
@@ -164,6 +165,15 @@ def configure_bundled_webview2() -> bool:
         # (e.g. if Edge is installed but detection fails).
         return True
     return False
+=======
+def configure_bundled_webview2() -> bool:
+    folder = find_runtime_folder()
+    if not folder:
+        return False
+    _apply_win10_fixed_runtime_acl(folder)
+    os.environ[_ENV_FOLDER] = str(folder)
+    return True
+>>>>>>> 64f892986127762709046792be1005edd576e304
 
 
 def runtime_status_message() -> str:

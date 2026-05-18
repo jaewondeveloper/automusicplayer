@@ -17,9 +17,12 @@
     }
     #ytPlayer { z-index: 2; }
     #localVideo { object-fit: contain; background: #000; }
+<<<<<<< HEAD
     #localVideo::-webkit-media-controls-panel {
       background: linear-gradient(transparent, rgba(0, 0, 0, 0.65));
     }
+=======
+>>>>>>> 64f892986127762709046792be1005edd576e304
     #endScreen {
       position: fixed; inset: 0; display: none;
       align-items: center; justify-content: center;
@@ -129,6 +132,7 @@
       transition: opacity 0.35s ease;
     }
     .broadcast-credit.show { opacity: 1; }
+<<<<<<< HEAD
     #externalPlaybackOverlay {
       position: fixed;
       inset: 0;
@@ -154,12 +158,18 @@
       opacity: 0.88;
       max-width: 520px;
     }
+=======
+>>>>>>> 64f892986127762709046792be1005edd576e304
   </style>
 </head>
 <body>
   <div id="playerWrap">
     <div id="ytContainer"><div id="ytPlayer"></div></div>
+<<<<<<< HEAD
     <video id="localVideo" playsinline controls controlsList="nodownload" style="display:none"></video>
+=======
+    <video id="localVideo" playsinline style="display:none"></video>
+>>>>>>> 64f892986127762709046792be1005edd576e304
   </div>
 
   <div id="audioUnlock" role="button" tabindex="0">화면을 눌러 방송 소리 켜기</div>
@@ -169,6 +179,7 @@
     <p class="end-text" id="endText">방송종료입니다</p>
   </div>
 
+<<<<<<< HEAD
   <div id="externalPlaybackOverlay" aria-live="polite">
     <p class="external-playback-title" id="externalPlaybackTitle">YouTube 영상</p>
     <p class="external-playback-hint" id="externalPlaybackHint">
@@ -177,6 +188,8 @@
     </p>
   </div>
 
+=======
+>>>>>>> 64f892986127762709046792be1005edd576e304
   <div class="toast-next-song" id="toast"></div>
   <p class="broadcast-credit" id="broadcastCredit">Made by 신재원, 정규환</p>
 
@@ -209,8 +222,11 @@
       var YT_STATE_ENDED = 0;
       var MIN_PLAY_MS_BEFORE_ADVANCE = 4000;
       var ytErrorRetried = false;
+<<<<<<< HEAD
       var streamPlaybackActive = false;
       var streamFallbackRequested = false;
+=======
+>>>>>>> 64f892986127762709046792be1005edd576e304
 
       var localVideo = document.getElementById("localVideo");
       var endScreen = document.getElementById("endScreen");
@@ -398,10 +414,14 @@
         var dur = 0;
         var item = playlist[currentIndex];
         if (!item) return { current: 0, duration: 0 };
+<<<<<<< HEAD
         if (streamPlaybackActive && localVideo && localVideo.src) {
           if (isFinite(localVideo.currentTime)) cur = localVideo.currentTime || 0;
           if (isFinite(localVideo.duration)) dur = localVideo.duration || 0;
         } else if (item.type === "youtube" && ytPlayer) {
+=======
+        if (item.type === "youtube" && ytPlayer) {
+>>>>>>> 64f892986127762709046792be1005edd576e304
           if (typeof ytPlayer.getCurrentTime === "function") {
             try {
               cur = ytPlayer.getCurrentTime() || 0;
@@ -445,9 +465,12 @@
       }
 
       function isYoutubeEnded() {
+<<<<<<< HEAD
         if (streamPlaybackActive && localVideo) {
           return !!localVideo.ended;
         }
+=======
+>>>>>>> 64f892986127762709046792be1005edd576e304
         if (!ytPlayer || typeof ytPlayer.getPlayerState !== "function") return false;
         try {
           return ytPlayer.getPlayerState() === YT_STATE_ENDED;
@@ -473,7 +496,10 @@
       }
 
       function onTrackEnded() {
+<<<<<<< HEAD
         if (streamFallbackRequested && !streamPlaybackActive) return;
+=======
+>>>>>>> 64f892986127762709046792be1005edd576e304
         if (songFinishedSent) return;
         if (!hasPlayedEnoughToAdvance()) return;
         if (currentIndex < 0 || playbackStatus === "stopped") return;
@@ -485,7 +511,10 @@
       }
 
       function syncPlaybackProgress() {
+<<<<<<< HEAD
         if (streamFallbackRequested && !streamPlaybackActive) return;
+=======
+>>>>>>> 64f892986127762709046792be1005edd576e304
         if (currentIndex < 0 || playbackStatus === "stopped" || playbackStatus === "paused") return;
         if (isYoutubeEnded() && hasPlayedEnoughToAdvance()) {
           onTrackEnded();
@@ -593,6 +622,7 @@
         }
       }
 
+<<<<<<< HEAD
       function isEmbedRestrictedError(code) {
         return code === 101 || code === 150 || code === 153;
       }
@@ -692,6 +722,9 @@
           requestYoutubeStreamFallback();
           return;
         }
+=======
+      function onPlayerError() {
+>>>>>>> 64f892986127762709046792be1005edd576e304
         var item = playlist[currentIndex];
         if (item && item.type === "youtube" && !ytErrorRetried) {
           ytErrorRetried = true;
@@ -722,8 +755,12 @@
             cc_load_policy: 0,
             fs: 1,
             enablejsapi: 1,
+<<<<<<< HEAD
             origin: ORIGIN,
             vq: "hd1080"
+=======
+            origin: ORIGIN
+>>>>>>> 64f892986127762709046792be1005edd576e304
           },
           events: {
             onReady: onPlayerReady,
@@ -813,10 +850,13 @@
         nextAlertSent = false;
         endScreen.classList.remove("show");
         broadcastEndedAck = false;
+<<<<<<< HEAD
         streamPlaybackActive = false;
         streamFallbackRequested = false;
         hideExternalPlaybackOverlay();
         if (ytContainer) ytContainer.style.display = "block";
+=======
+>>>>>>> 64f892986127762709046792be1005edd576e304
 
         var item = playlist[currentIndex];
         if (!item) return;
@@ -825,16 +865,22 @@
         ytErrorRetried = false;
 
         if (item.type === "youtube") {
+<<<<<<< HEAD
           streamPlaybackActive = false;
           streamFallbackRequested = false;
           localVideo.controls = false;
           localVideo.removeAttribute("controls");
+=======
+>>>>>>> 64f892986127762709046792be1005edd576e304
           localVideo.style.display = "none";
           localVideo.pause();
           try {
             localVideo.removeAttribute("src");
           } catch (e) {}
+<<<<<<< HEAD
           if (ytContainer) ytContainer.style.display = "block";
+=======
+>>>>>>> 64f892986127762709046792be1005edd576e304
           playYoutube(item);
         } else {
           if (ytContainer) ytContainer.style.display = "none";
@@ -878,8 +924,12 @@
 
       localVideo.addEventListener("timeupdate", function () {
         var item = playlist[currentIndex];
+<<<<<<< HEAD
         if (!item) return;
         if (item.type === "youtube" && !streamPlaybackActive) return;
+=======
+        if (!item || item.type === "youtube") return;
+>>>>>>> 64f892986127762709046792be1005edd576e304
         syncPlaybackProgress();
       });
 
@@ -946,6 +996,7 @@
         endImagePath = cfg.end_broadcast_image || "";
       });
 
+<<<<<<< HEAD
       socket.on("playback_seek", function (data) {
         var sec = Math.max(0, Number(data && data.seconds) || 0);
         if (streamPlaybackActive && localVideo) {
@@ -995,6 +1046,8 @@
         setTimeout(onTrackEnded, 800);
       });
 
+=======
+>>>>>>> 64f892986127762709046792be1005edd576e304
       socket.on("load_track", function (state) {
         playlist = state.playlist || [];
         currentIndex = state.current_index;
