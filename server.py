@@ -35,12 +35,19 @@ from config_store import (
     ALLOWED_UPLOAD_EXT,
     ASSETS_DIR,
     BUNDLE_DIR,
+    DEFAULT_NEXT_ALERT_LOGO,
     UPLOADS_DIR,
     WEBSITE_PORT,
+    broadcast_ui_config,
+    bundled_assets_dir,
     bundle_dir,
     ensure_dirs,
     is_setup_complete,
     load_config,
+    normalize_alert_theme,
+    normalize_next_alert_logo,
+    normalize_next_alert_text,
+    resolve_alert_logo_url,
     save_config,
 )
 from network_utils import network_access_urls, panel_urls
@@ -541,6 +548,10 @@ def api_public_config():
         {
             "port": port,
             "end_broadcast_image": cfg.get("end_broadcast_image", ""),
+            "next_alert_logo": resolve_alert_logo_url(cfg.get("next_alert_logo")),
+            "next_alert_text": normalize_next_alert_text(cfg.get("next_alert_text")),
+            "next_alert_theme": normalize_alert_theme(cfg.get("next_alert_theme")),
+            "now_playing_theme": normalize_alert_theme(cfg.get("now_playing_theme")),
             "autostart": cfg.get("autostart", False),
             "setup_complete": is_setup_complete(cfg),
             "panel_local": urls["panel_local"],
@@ -800,6 +811,7 @@ def api_end_image():
     cfg = load_config()
     cfg["end_broadcast_image"] = f"assets/{dest.name}"
     save_config(cfg)
+    _emit_broadcast_ui_config()
     return jsonify({"ok": True, "path": cfg["end_broadcast_image"]})
 
 
@@ -810,7 +822,92 @@ def api_end_image_clear():
     cfg = load_config()
     cfg["end_broadcast_image"] = ""
     save_config(cfg)
+    _emit_broadcast_ui_config()
     return jsonify({"ok": True})
+
+
+@app.route("/api/settings/next-alert-branding", methods=["GET"])
+def api_next_alert_branding_get():
+    if not current_user.is_authenticated:
+        return jsonify({"error": "unauthorized"}), 401
+    cfg = load_config()
+    return jsonify(
+        {
+            "next_alert_logo": resolve_alert_logo_url(cfg.get("next_alert_logo")),
+            "next_alert_logo_stored": normalize_next_alert_logo(cfg.get("next_alert_logo")),
+            "next_alert_text": normalize_next_alert_text(cfg.get("next_alert_text")),
+            "next_alert_theme": normalize_alert_theme(cfg.get("next_alert_theme")),
+            "now_playing_theme": normalize_alert_theme(cfg.get("now_playing_theme")),
+        }
+    )
+
+
+@app.route("/api/settings/next-alert-logo", methods=["POST"])
+def api_next_alert_logo_upload():
+    if not current_user.is_authenticated:
+        return jsonify({"error": "unauthorized"}), 401
+    if "file" not in request.files:
+        return jsonify({"error": "파일 없음"}), 400
+    f = request.files["file"]
+    ext = Path(f.filename or "").suffix.lower()
+    if ext not in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}:
+        return jsonify({"error": "이미지 파일만 가능"}), 400
+    safe = secure_filename(f.filename) or "next_alert_logo.png"
+    dest = ASSETS_DIR / safe
+    f.save(dest)
+    cfg = load_config()
+    cfg["next_alert_logo"] = f"assets/{dest.name}"
+    save_config(cfg)
+    _emit_broadcast_ui_config()
+    return jsonify({"ok": True, "path": resolve_alert_logo_url(cfg["next_alert_logo"])})
+
+
+@app.route("/api/settings/next-alert-logo", methods=["DELETE"])
+def api_next_alert_logo_clear():
+    if not current_user.is_authenticated:
+        return jsonify({"error": "unauthorized"}), 401
+    cfg = load_config()
+    cfg["next_alert_logo"] = DEFAULT_NEXT_ALERT_LOGO
+    save_config(cfg)
+    _emit_broadcast_ui_config()
+    return jsonify({"ok": True, "path": resolve_alert_logo_url(DEFAULT_NEXT_ALERT_LOGO)})
+
+
+@app.route("/api/settings/alert-themes", methods=["POST"])
+def api_alert_themes_save():
+    if not current_user.is_authenticated:
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+    cfg = load_config()
+    cfg["next_alert_theme"] = normalize_alert_theme(data.get("next_alert_theme"))
+    cfg["now_playing_theme"] = normalize_alert_theme(data.get("now_playing_theme"))
+    save_config(cfg)
+    _emit_broadcast_ui_config()
+    return jsonify(
+        {
+            "ok": True,
+            "next_alert_theme": cfg["next_alert_theme"],
+            "now_playing_theme": cfg["now_playing_theme"],
+        }
+    )
+
+
+@app.route("/api/settings/next-alert-text", methods=["POST"])
+def api_next_alert_text_save():
+    if not current_user.is_authenticated:
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+    cfg = load_config()
+    cfg["next_alert_text"] = normalize_next_alert_text(data.get("text"))
+    save_config(cfg)
+    _emit_broadcast_ui_config()
+    return jsonify({"ok": True, "text": cfg["next_alert_text"]})
+
+
+def _emit_broadcast_ui_config() -> None:
+    cfg = load_config()
+    payload = broadcast_ui_config(cfg)
+    socketio.emit("config", payload, namespace="/broadcast")
 
 
 @app.route("/api/settings/broadcast-browser", methods=["GET", "POST"])
@@ -944,9 +1041,18 @@ def uploads_file(filename):
 
 @app.route("/assets/<path:filename>")
 def assets_file(filename):
-    from flask import send_from_directory
+    from flask import abort, send_from_directory
 
-    safe = secure_filename(Path(filename).name)
+    norm = filename.replace("\\", "/")
+    if norm.startswith("bundled/"):
+        name = secure_filename(Path(norm).name)
+        base = bundled_assets_dir()
+        if not (base / name).is_file():
+            abort(404)
+        return send_from_directory(base, name)
+    if "/" in norm:
+        abort(404)
+    safe = secure_filename(Path(norm).name)
     return send_from_directory(ASSETS_DIR, safe)
 
 
@@ -960,6 +1066,10 @@ def local_state():
     playlist = broadcast_state.get_playlist_dicts()
     settings = {
         "end_broadcast_image": cfg.get("end_broadcast_image", ""),
+        "next_alert_logo": normalize_next_alert_logo(cfg.get("next_alert_logo")),
+        "next_alert_text": normalize_next_alert_text(cfg.get("next_alert_text")),
+        "next_alert_theme": normalize_alert_theme(cfg.get("next_alert_theme")),
+        "now_playing_theme": normalize_alert_theme(cfg.get("now_playing_theme")),
         "autostart": str(cfg.get("autostart", False)).lower(),
         "broadcast_browser": cfg.get("broadcast_browser", "auto"),
         "port": str(cfg.get("port", 8765)),
@@ -982,13 +1092,28 @@ def local_apply():
     # Apply settings
     cfg = load_config()
     changed = False
-    for key in ("end_broadcast_image", "autostart", "broadcast_browser", "port"):
+    for key in (
+        "end_broadcast_image",
+        "next_alert_logo",
+        "next_alert_text",
+        "next_alert_theme",
+        "now_playing_theme",
+        "autostart",
+        "broadcast_browser",
+        "port",
+    ):
         if key in settings:
             val = settings[key]
             if key == "autostart":
                 val = val in ("true", True)
             elif key == "port":
                 val = int(val) if str(val).isdigit() else cfg.get("port", 8765)
+            elif key == "next_alert_text":
+                val = normalize_next_alert_text(val)
+            elif key == "next_alert_logo":
+                val = normalize_next_alert_logo(val)
+            elif key in ("next_alert_theme", "now_playing_theme"):
+                val = normalize_alert_theme(val)
             cfg[key] = val
             changed = True
     if changed:
@@ -1037,6 +1162,10 @@ def cf_push():
     playlist = broadcast_state.get_playlist_dicts()
     settings = {
         "end_broadcast_image": cfg.get("end_broadcast_image", ""),
+        "next_alert_logo": normalize_next_alert_logo(cfg.get("next_alert_logo")),
+        "next_alert_text": normalize_next_alert_text(cfg.get("next_alert_text")),
+        "next_alert_theme": normalize_alert_theme(cfg.get("next_alert_theme")),
+        "now_playing_theme": normalize_alert_theme(cfg.get("now_playing_theme")),
         "autostart": str(cfg.get("autostart", False)).lower(),
         "broadcast_browser": cfg.get("broadcast_browser", "auto"),
         "port": str(cfg.get("port", 8765)),
@@ -1078,17 +1207,33 @@ def cf_pull():
     # Apply settings
     if settings:
         changed = False
-        for key in ("end_broadcast_image", "autostart", "broadcast_browser", "port"):
+        for key in (
+            "end_broadcast_image",
+            "next_alert_logo",
+            "next_alert_text",
+            "next_alert_theme",
+            "now_playing_theme",
+            "autostart",
+            "broadcast_browser",
+            "port",
+        ):
             if key in settings:
                 val = settings[key]
                 if key == "autostart":
                     val = val == "true" or val is True
                 if key == "port":
                     val = int(val) if str(val).isdigit() else cfg.get("port", 8765)
+                if key == "next_alert_text":
+                    val = normalize_next_alert_text(val)
+                if key == "next_alert_logo":
+                    val = normalize_next_alert_logo(val)
+                if key in ("next_alert_theme", "now_playing_theme"):
+                    val = normalize_alert_theme(val)
                 cfg[key] = val
                 changed = True
         if changed:
             save_config(cfg)
+            _emit_broadcast_ui_config()
 
     # 패널 UI 업데이트
     _emit_playlist()
@@ -1138,7 +1283,7 @@ def on_broadcast_connect():
     )
     emit("state_sync", snap)
     cfg = load_config()
-    emit("config", {"end_broadcast_image": cfg.get("end_broadcast_image", "")})
+    emit("config", broadcast_ui_config(cfg))
     idx = int(snap.get("current_index", -1))
     status = snap.get("playback_status", "stopped")
     if idx >= 0 and status in ("playing", "paused"):

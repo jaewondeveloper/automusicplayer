@@ -29,6 +29,20 @@ _ico = root / "app_icon.ico"
 if _ico.is_file():
     datas.append((str(_ico), "."))
 
+_bundled_assets = root / "assets" / "bundled"
+_logo = _bundled_assets / "njbs-logo.png"
+_fallback_logo = root / "4ca7b4607_njbs-logo.png"
+if not _logo.is_file() and _fallback_logo.is_file():
+    _bundled_assets.mkdir(parents=True, exist_ok=True)
+    import shutil
+
+    shutil.copy2(_fallback_logo, _logo)
+    print("INFO: assets/bundled/njbs-logo.png <- 4ca7b4607_njbs-logo.png")
+if _bundled_assets.is_dir() and any(_bundled_assets.iterdir()):
+    datas.append((str(_bundled_assets), "assets/bundled"))
+else:
+    print("WARNING: assets/bundled 없음 — njbs-logo.png 를 assets/bundled 에 넣으세요.")
+
 _wv2 = root / "WebView2Runtime"
 if _wv2.is_dir():
     datas.append((str(_wv2), "WebView2Runtime"))

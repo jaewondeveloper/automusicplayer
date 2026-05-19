@@ -2,6 +2,15 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 
+set "PY=python"
+where python >nul 2>&1 || set "PY=py -3"
+%PY% --version >nul 2>&1
+if errorlevel 1 (
+    echo [오류] Python이 없습니다. python 또는 py -3 를 PATH에 추가하세요.
+    pause
+    exit /b 1
+)
+
 echo === 3세대 음방시스템 빌드 (단일 exe) ===
 echo  패치: 복구/선로딩/1080p스트림/DB동기화/다른PC호환
 
@@ -11,14 +20,24 @@ if not exist "14720088.png" (
     exit /b 1
 )
 
-python -m pip install -q -r requirements.txt pyinstaller cffi
+if not exist "assets\bundled\njbs-logo.png" (
+    if not exist "4ca7b4607_njbs-logo.png" (
+        echo [오류] assets\bundled\njbs-logo.png 또는 4ca7b4607_njbs-logo.png 필요
+        pause
+        exit /b 1
+    )
+    if not exist "assets\bundled" mkdir "assets\bundled"
+    copy /Y "4ca7b4607_njbs-logo.png" "assets\bundled\njbs-logo.png" >nul
+)
+
+%PY% -m pip install -q -r requirements.txt pyinstaller cffi
 if errorlevel 1 (
     echo [오류] pip 설치 실패
     pause
     exit /b 1
 )
 
-python -c "from PIL import Image; Image.open('14720088.png').convert('RGBA').save('app_icon.ico', format='ICO', sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)]); print('app_icon.ico OK')"
+%PY% -c "from PIL import Image; Image.open('14720088.png').convert('RGBA').save('app_icon.ico', format='ICO', sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)]); print('app_icon.ico OK')"
 if errorlevel 1 (
     echo [오류] 아이콘 변환 실패
     pause
@@ -40,7 +59,7 @@ if errorlevel 1 (
 
 echo.
 echo [1/2] WebView2 런타임 다운로드 ^(약 250MB, exe에 포함됨^)…
-python prepare_webview2_runtime.py
+%PY% prepare_webview2_runtime.py
 if errorlevel 1 (
     echo [오류] WebView2Runtime 준비 실패
     pause
@@ -57,7 +76,7 @@ if not exist "WebView2Runtime\msedgewebview2.exe" (
 
 echo.
 echo [2/2] 단일 exe 빌드 ^(수 분 소요, 용량 약 400~600MB^)…
-pyinstaller --noconfirm --clean build.spec
+%PY% -m PyInstaller --noconfirm --clean build.spec
 if errorlevel 1 (
     echo [오류] 빌드 실패
     pause

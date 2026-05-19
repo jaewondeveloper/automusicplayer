@@ -11,6 +11,12 @@ DEFAULT_PORT = 8765
 WEBSITE_PORT = 2026
 ALLOWED_UPLOAD_EXT = {".mp4", ".mkv", ".mp3", ".wav", ".m4a", ".webm", ".ogg", ".flac"}
 
+# 방송 안내 기본 로고 (exe/소스 번들, 절대 경로 저장 금지)
+DEFAULT_NEXT_ALERT_LOGO = "bundled/njbs-logo.png"
+DEFAULT_NEXT_ALERT_TEXT = "중동중학교 방송부"
+DEFAULT_ALERT_THEME = "light"
+VALID_ALERT_THEMES = frozenset({"dark", "light"})
+
 
 def get_install_dir() -> Path:
     """설정·업로드 등 쓰기 가능 경로 (exe와 같은 폴더)."""
@@ -42,6 +48,10 @@ UPLOADS_DIR = INSTALL_DIR / "uploads"
 ASSETS_DIR = INSTALL_DIR / "assets"
 
 
+def bundled_assets_dir() -> Path:
+    return bundle_dir() / "assets" / "bundled"
+
+
 def ensure_dirs() -> None:
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     ASSETS_DIR.mkdir(parents=True, exist_ok=True)
@@ -57,6 +67,49 @@ CF_DEFAULTS: dict[str, Any] = {
     "playback_error_recover_mode": "manual",  # manual | auto
 }
 
+BRANDING_DEFAULTS: dict[str, Any] = {
+    "next_alert_logo": DEFAULT_NEXT_ALERT_LOGO,
+    "next_alert_text": DEFAULT_NEXT_ALERT_TEXT,
+    "next_alert_theme": DEFAULT_ALERT_THEME,
+    "now_playing_theme": DEFAULT_ALERT_THEME,
+}
+
+
+def normalize_next_alert_text(value: Any) -> str:
+    t = str(value or "").strip()
+    return t if t else DEFAULT_NEXT_ALERT_TEXT
+
+
+def normalize_alert_theme(value: Any) -> str:
+    v = str(value or DEFAULT_ALERT_THEME).strip().lower()
+    return v if v in VALID_ALERT_THEMES else DEFAULT_ALERT_THEME
+
+
+def normalize_next_alert_logo(stored: Any) -> str:
+    """config.json 에 저장할 상대 경로 (절대 경로·Windows 경로 거부)."""
+    raw = str(stored or "").strip().replace("\\", "/")
+    if not raw:
+        return DEFAULT_NEXT_ALERT_LOGO
+    if ":" in raw or raw.startswith("/"):
+        return DEFAULT_NEXT_ALERT_LOGO
+    if raw.startswith("assets/bundled/"):
+        return "bundled/" + Path(raw).name
+    if raw == "bundled/njbs-logo.png" or raw.startswith("bundled/"):
+        return raw
+    if raw.startswith("assets/"):
+        return raw
+    return DEFAULT_NEXT_ALERT_LOGO
+
+
+def resolve_alert_logo_url(stored: Any) -> str:
+    """방송/패널에서 쓰는 HTTP 경로."""
+    rel = normalize_next_alert_logo(stored)
+    if rel.startswith("bundled/"):
+        return f"/assets/bundled/{Path(rel).name}"
+    if rel.startswith("assets/"):
+        return "/" + rel
+    return f"/assets/bundled/njbs-logo.png"
+
 
 def load_config() -> dict[str, Any]:
     ensure_dirs()
@@ -67,6 +120,7 @@ def load_config() -> dict[str, Any]:
             "password_hash": "",
             "port": DEFAULT_PORT,
             "end_broadcast_image": "",
+            **BRANDING_DEFAULTS,
             "autostart": False,
             "broadcast_browser": "auto",
             "onboarding_complete": False,
@@ -90,9 +144,32 @@ def load_config() -> dict[str, Any]:
         if k not in data:
             data[k] = v
             changed = True
+    for k, v in BRANDING_DEFAULTS.items():
+        if k not in data:
+            data[k] = v
+            changed = True
+    logo_norm = normalize_next_alert_logo(data.get("next_alert_logo"))
+    if data.get("next_alert_logo") != logo_norm:
+        data["next_alert_logo"] = logo_norm
+        changed = True
+    text_norm = normalize_next_alert_text(data.get("next_alert_text"))
+    if data.get("next_alert_text") != text_norm:
+        data["next_alert_text"] = text_norm
+        changed = True
     if changed:
         save_config(data)
     return data
+
+
+def broadcast_ui_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    """방송 화면(종료·다음곡 안내)에 전달할 UI 설정."""
+    return {
+        "end_broadcast_image": cfg.get("end_broadcast_image", ""),
+        "next_alert_logo": resolve_alert_logo_url(cfg.get("next_alert_logo")),
+        "next_alert_text": normalize_next_alert_text(cfg.get("next_alert_text")),
+        "next_alert_theme": normalize_alert_theme(cfg.get("next_alert_theme")),
+        "now_playing_theme": normalize_alert_theme(cfg.get("now_playing_theme")),
+    }
 
 
 def save_config(data: dict[str, Any]) -> None:

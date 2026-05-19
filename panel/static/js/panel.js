@@ -280,9 +280,9 @@
     return "/" + path.replace(/^\/+/, "");
   }
 
-  function updateEndImagePreview(path) {
-    const wrap = $("#endImagePreviewWrap");
-    const img = $("#endImagePreview");
+  function updateImagePreview(path, wrapId, imgId) {
+    const wrap = $(wrapId);
+    const img = $(imgId);
     if (!wrap || !img) return;
     const url = endImagePublicUrl(path);
     if (!url) {
@@ -297,6 +297,36 @@
       wrap.hidden = false;
     };
     img.src = url + (url.includes("?") ? "&" : "?") + "t=" + Date.now();
+  }
+
+  function updateEndImagePreview(path) {
+    updateImagePreview(path, "#endImagePreviewWrap", "#endImagePreview");
+  }
+
+  const DEFAULT_NEXT_ALERT_LOGO_URL = "/assets/bundled/njbs-logo.png";
+
+  function getSelectedRadio(name, fallback = "light") {
+    const el = document.querySelector(`input[name="${name}"]:checked`);
+    return el ? el.value : fallback;
+  }
+
+  function setSelectedRadio(name, value) {
+    const el = document.querySelector(`input[name="${name}"][value="${value}"]`);
+    if (el) el.checked = true;
+  }
+
+  function syncAlertLogoPreviewWrapTheme() {
+    const wrap = $("#nextAlertLogoPreviewWrap");
+    if (!wrap) return;
+    const theme = getSelectedRadio("nextAlertTheme", "light");
+    wrap.classList.remove("preview-on-dark", "preview-on-light");
+    wrap.classList.add(theme === "light" ? "preview-on-light" : "preview-on-dark");
+  }
+
+  function updateNextAlertLogoPreview(path) {
+    const url = path || DEFAULT_NEXT_ALERT_LOGO_URL;
+    updateImagePreview(url, "#nextAlertLogoPreviewWrap", "#nextAlertLogoPreview");
+    syncAlertLogoPreviewWrapTheme();
   }
 
   function escapeHtml(s) {
@@ -780,6 +810,99 @@
       if (fileInput) fileInput.value = "";
     });
 
+    $("#btnNextAlertLogo").addEventListener("click", () => $("#nextAlertLogoInput").click());
+    $("#nextAlertLogoInput").addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const localPreview = URL.createObjectURL(file);
+      const previewImg = $("#nextAlertLogoPreview");
+      const previewWrap = $("#nextAlertLogoPreviewWrap");
+      if (previewImg && previewWrap) {
+        previewImg.src = localPreview;
+        previewWrap.hidden = false;
+      }
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/settings/next-alert-logo", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "X-CSRFToken": csrfToken },
+        body: fd,
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const path = data.path || "";
+        $("#nextAlertLogoHint").textContent = path ? "로고 적용 중" : "업로드 완료";
+        if (localPreview) URL.revokeObjectURL(localPreview);
+        updateNextAlertLogoPreview(path);
+      } else {
+        if (localPreview) URL.revokeObjectURL(localPreview);
+        updateNextAlertLogoPreview("");
+        showAppAlert(data.error);
+      }
+      e.target.value = "";
+    });
+
+    $("#btnNextAlertLogoClear").addEventListener("click", async () => {
+      await fetch("/api/settings/next-alert-logo", {
+        method: "DELETE",
+        credentials: "same-origin",
+        headers: { "X-CSRFToken": csrfToken },
+      });
+      $("#nextAlertLogoHint").textContent = "기본 로고 사용 중";
+      updateNextAlertLogoPreview(DEFAULT_NEXT_ALERT_LOGO_URL);
+      const fileInput = $("#nextAlertLogoInput");
+      if (fileInput) fileInput.value = "";
+    });
+
+    document.querySelectorAll('input[name="nextAlertTheme"]').forEach((el) => {
+      el.addEventListener("change", syncAlertLogoPreviewWrapTheme);
+    });
+
+    $("#btnAlertThemesSave").addEventListener("click", async () => {
+      const res = await fetch("/api/settings/alert-themes", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": csrfToken,
+        },
+        body: JSON.stringify({
+          next_alert_theme: getSelectedRadio("nextAlertTheme", "light"),
+          now_playing_theme: getSelectedRadio("nowPlayingTheme", "light"),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSelectedRadio("nextAlertTheme", data.next_alert_theme || "light");
+        setSelectedRadio("nowPlayingTheme", data.now_playing_theme || "light");
+        syncAlertLogoPreviewWrapTheme();
+        showAppAlert("안내 테마가 저장되었습니다.", { title: "완료" });
+      } else {
+        showAppAlert(data.error || "저장 실패", { title: "오류" });
+      }
+    });
+
+    $("#btnNextAlertTextSave").addEventListener("click", async () => {
+      const text = ($("#nextAlertTextInput").value || "").trim();
+      const res = await fetch("/api/settings/next-alert-text", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": csrfToken,
+        },
+        body: JSON.stringify({ text }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        $("#nextAlertTextInput").value = data.text || "";
+        showAppAlert("안내 문구가 저장되었습니다.", { title: "완료" });
+      } else {
+        showAppAlert(data.error || "저장 실패", { title: "오류" });
+      }
+    });
+
     $("#btnChangePassword").addEventListener("click", async () => {
       const res = await fetch("/api/password", {
         method: "POST",
@@ -990,6 +1113,14 @@
       ? "커스텀 종료 이미지 적용 중"
       : "기본 종료 화면 사용 중";
     updateEndImagePreview(endPath);
+    const logoPath = data.next_alert_logo || DEFAULT_NEXT_ALERT_LOGO_URL;
+    $("#nextAlertLogoHint").textContent = "로고 적용 중";
+    updateNextAlertLogoPreview(logoPath);
+    setSelectedRadio("nextAlertTheme", data.next_alert_theme || "light");
+    setSelectedRadio("nowPlayingTheme", data.now_playing_theme || "light");
+    syncAlertLogoPreviewWrapTheme();
+    const textInput = $("#nextAlertTextInput");
+    if (textInput) textInput.value = data.next_alert_text || "";
     showLanUrls(data);
     const br = data.broadcast_browser || "auto";
     const radio = document.querySelector(

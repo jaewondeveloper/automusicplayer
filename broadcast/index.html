@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
@@ -34,79 +34,203 @@
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
-    .toast-next-song {
+    #nextSongPanel {
       position: fixed;
-      top: 50%;
-      right: 40px;
-      background: rgba(12, 16, 24, 0.78);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border-radius: 20px;
-      padding: 18px 24px;
-      color: #fff;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
-      transform: translate(120%, -50%);
-      transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
-      font-size: 15px;
-      font-weight: 600;
-      min-width: 260px;
-      max-width: 360px;
+      right: 0;
+      width: clamp(300px, 32vw, 460px);
       z-index: 30;
+      color: #fff;
+      border-radius: 22px 0 0 22px;
+      transform-origin: right center;
+      will-change: transform;
+      transition:
+        transform 0.6s cubic-bezier(0.22, 1, 0.36, 1),
+        top 0.55s cubic-bezier(0.22, 1, 0.36, 1),
+        bottom 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+      pointer-events: none;
+      overflow: hidden;
+      border: 1px solid transparent;
+      border-right: none;
+      box-shadow: none;
+    }
+    #nextSongPanel.show {
+      border-color: rgba(255, 255, 255, 0.14);
+      box-shadow: -20px 0 56px rgba(0, 0, 0, 0.5);
       pointer-events: none;
     }
-    .toast-next-song.show { transform: translate(0, -50%); }
-    .toast-next-song .toast-next-head {
-      font-size: 13px;
-      font-weight: 700;
-      opacity: 0.92;
-      margin-bottom: 10px;
-      color: rgba(255, 255, 255, 0.85);
+    #nextSongPanel.mode-next {
+      top: clamp(22px, 4vh, 52px);
+      bottom: clamp(22px, 4vh, 52px);
+      transform: translate3d(100%, 0, 0);
     }
-    .toast-next-song .toast-next-list {
-      list-style: none;
-      margin: 0;
+    #nextSongPanel.mode-next.show { transform: translate3d(0, 0, 0); }
+    #nextSongPanel.mode-now,
+    #nextSongPanel.mode-msg {
+      top: 50%;
+      bottom: auto;
+      transform: translate3d(100%, -50%, 0);
+    }
+    #nextSongPanel.mode-now.show,
+    #nextSongPanel.mode-msg.show { transform: translate3d(0, -50%, 0); }
+    #nextSongPanel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: linear-gradient(180deg, #f8fafc 0%, #eef2f8 48%, #f4f6fa 100%);
+      z-index: 0;
+    }
+    #nextSongPanel:not(.show) {
+      pointer-events: none;
+    }
+    #nextSongPanel.theme-dark::before {
+      background: linear-gradient(180deg, #0c1220 0%, #101828 48%, #0a0f18 100%);
+    }
+    .side-alert-next-body,
+    .side-alert-now-body,
+    .side-alert-msg-body {
+      transition: opacity 0.4s ease, max-height 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+      overflow: hidden;
+    }
+    .side-alert-next-body {
+      flex: 1; min-height: 0; display: flex; flex-direction: column;
+      max-height: 2000px; opacity: 1;
+    }
+    .side-alert-now-body,
+    .side-alert-msg-body { max-height: 0; opacity: 0; flex-shrink: 0; }
+    #nextSongPanel.mode-now .side-alert-next-body,
+    #nextSongPanel.mode-msg .side-alert-next-body {
+      flex: 0; max-height: 0; opacity: 0; margin: 0; padding: 0;
+    }
+    #nextSongPanel.mode-now .side-alert-now-body {
+      max-height: 120px; opacity: 1; padding-top: 4px;
+    }
+    #nextSongPanel.mode-now .side-alert-msg-body {
+      max-height: 0; opacity: 0; padding: 0;
+    }
+    #nextSongPanel.mode-msg .side-alert-now-body {
+      max-height: 0; opacity: 0; padding: 0;
+    }
+    #nextSongPanel.mode-msg .side-alert-msg-body {
+      max-height: 200px; opacity: 1; padding-top: 4px;
+    }
+    .next-song-accent {
+      position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+      border-radius: 22px 0 0 22px;
+      background: linear-gradient(180deg, #6b9fff, #3182f6);
+      z-index: 2;
+    }
+    .next-song-inner {
+      position: relative; z-index: 1;
+      display: flex; flex-direction: column; height: 100%;
+      min-height: 0; overflow: hidden;
+      padding: clamp(22px, 3vh, 36px) clamp(22px, 2.6vw, 32px) clamp(18px, 2.2vh, 26px);
+    }
+    .next-song-brand {
+      display: flex; align-items: center; gap: 14px;
+      margin-bottom: clamp(16px, 2.5vh, 24px); flex-shrink: 0;
+      padding: 12px 14px; border-radius: 14px;
+      background: rgba(255, 255, 255, 0.85);
+      border: 1px solid rgba(0, 0, 0, 0.08);
+    }
+    .next-song-brand[hidden] { display: none !important; }
+    .next-song-brand img {
+      width: clamp(44px, 7vw, 64px); height: clamp(44px, 7vw, 64px);
+      object-fit: contain; flex-shrink: 0;
+    }
+    #nextSongPanel.theme-light .alert-logo-tint { filter: brightness(0) !important; }
+    #nextSongPanel.theme-dark .alert-logo-tint { filter: brightness(0) invert(1) !important; }
+    .next-song-brand-text { font-size: clamp(14px, 1.7vw, 18px); font-weight: 700; color: #1e293b; }
+    #nextSongPanel.theme-dark .next-song-brand-text { color: rgba(255,255,255,0.94); }
+    .next-song-label {
+      display: inline-block; font-size: 11px; font-weight: 800;
+      letter-spacing: 0.14em; color: #2563eb; margin-bottom: 6px;
+    }
+    .next-song-head {
+      font-size: clamp(24px, 3vw, 32px); font-weight: 800; line-height: 1.15;
+      color: #0f172a;
+    }
+    #nextSongPanel.theme-dark .next-song-head { color: #fff; }
+    .next-song-list {
+      list-style: none; margin: 0; padding: 4px 0; flex: 1;
+      overflow: hidden; display: flex; flex-direction: column; gap: 10px;
+    }
+    .next-song-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 14px; border-radius: 14px;
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      font-size: clamp(15px, 1.8vw, 20px); font-weight: 600;
+      color: #0f172a;
+    }
+    #nextSongPanel.theme-dark .next-song-item {
+      background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.1); color: #fff;
+    }
+    .next-song-item--featured {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
       padding: 0;
+      background: transparent;
+      border: none;
     }
-    .toast-next-song .toast-next-list li {
+    .next-song-card-row {
       display: flex;
       align-items: center;
       gap: 12px;
-      padding: 8px 0;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-      font-size: 15px;
-      font-weight: 600;
-      line-height: 1.35;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid rgba(0, 0, 0, 0.08);
     }
-    .toast-next-song .toast-next-badge {
-      flex-shrink: 0;
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      background: #fff;
-      color: #1b2a4a;
-      font-size: 14px;
-      font-weight: 800;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      line-height: 1;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    #nextSongPanel.theme-dark .next-song-card-row {
+      background: rgba(255, 255, 255, 0.07);
+      border-color: rgba(255, 255, 255, 0.1);
     }
-    .toast-next-song .toast-next-title {
-      flex: 1;
-      min-width: 0;
-      white-space: nowrap;
+    .next-song-thumb-wrap {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border-radius: 12px;
       overflow: hidden;
-      text-overflow: ellipsis;
+      background: rgba(0, 0, 0, 0.08);
+      flex-shrink: 0;
     }
-    .toast-next-song .toast-next-list li:last-child { border-bottom: none; padding-bottom: 0; }
-    .toast-next-song .toast-next-list li:first-child { padding-top: 0; }
-    .toast-next-song.toast-simple {
-      line-height: 1.45;
-      font-size: 16px;
+    .next-song-thumb {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .next-song-badge {
+      flex-shrink: 0; width: 34px; height: 34px; border-radius: 12px;
+      background: linear-gradient(145deg, #3182f6, #1b5ec4); color: #fff;
+      font-size: 14px; font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .next-song-title {
+      flex: 1; min-width: 0; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .next-song-credit {
+      flex-shrink: 0; margin-top: 14px; padding-top: 14px;
+      border-top: 1px solid rgba(0,0,0,0.08);
+      font-size: 11px; color: rgba(15,23,42,0.45); text-align: center;
+    }
+    #nextSongPanel.theme-dark .next-song-credit {
+      border-top-color: rgba(255,255,255,0.1); color: rgba(255,255,255,0.38);
+    }
+    .now-playing-line {
+      margin: 8px 0 0; font-size: clamp(16px, 1.9vw, 22px);
+      font-weight: 700; line-height: 1.4; color: #0f172a;
+    }
+    #nextSongPanel.theme-dark .now-playing-line,
+    #nextSongPanel.theme-dark .side-alert-msg-line { color: #fff; }
+    .side-alert-msg-line {
+      margin: 8px 0 0;
+      font-size: clamp(15px, 1.8vw, 20px);
       font-weight: 700;
-      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+      line-height: 1.45;
+      color: #0f172a;
     }
     #audioUnlock {
       position: fixed; inset: 0; z-index: 40; display: none;
@@ -124,35 +248,31 @@
       50% { box-shadow: inset 0 0 80px 12px rgba(49, 130, 246, 0.35); }
     }
     #audioUnlock.show { display: flex; }
-    .broadcast-credit {
-      position: fixed;
-      right: 28px;
-      bottom: 28px;
-      z-index: 28;
-      font-size: 11px;
-      font-weight: 600;
-      color: rgba(255, 255, 255, 0.42);
-      letter-spacing: 0.02em;
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity 0.35s ease;
-    }
-    .broadcast-credit.show { opacity: 1; }
     .playback-error-alert {
+      position: fixed;
+      top: 40px;
+      right: 40px;
+      display: flex;
       flex-direction: column;
       align-items: stretch;
       min-width: 280px;
       max-width: 420px;
       padding: 18px 22px;
-      transform: translate(120%, 0);
-      top: 40px;
-      bottom: auto;
-      right: 40px;
+      background: rgba(12, 16, 24, 0.88);
+      border-radius: 20px;
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      transform: translate3d(120%, 0, 0);
+      transition: transform 0.5s cubic-bezier(0.34, 1.2, 0.64, 1);
+      z-index: 31;
       pointer-events: none;
     }
     .playback-error-alert.show {
-      transform: translate(0, 0);
+      transform: translate3d(0, 0, 0);
       pointer-events: auto;
+    }
+    .playback-error-alert .toast-next-head {
+      font-size: 13px; font-weight: 700; margin-bottom: 4px;
     }
     #ytContainer, #ytContainer iframe, #ytPlayer {
       pointer-events: auto;
@@ -255,7 +375,7 @@
     </p>
   </div>
 
-  <div id="playbackErrorAlert" class="toast-next-song playback-error-alert" aria-live="assertive">
+  <div id="playbackErrorAlert" class="playback-error-alert" aria-live="assertive">
     <p class="toast-next-head">재생 오류</p>
     <p class="error-msg" id="playbackErrorMessage"></p>
     <div class="recovery-progress-wrap" id="recoveryProgressWrap">
@@ -268,8 +388,30 @@
     </div>
   </div>
 
-  <div class="toast-next-song" id="toast"></div>
-  <p class="broadcast-credit" id="broadcastCredit">Made by 신재원, 정규환</p>
+  <div id="nextSongPanel" class="theme-light mode-next" aria-hidden="true">
+    <div class="next-song-accent" aria-hidden="true"></div>
+    <div class="next-song-inner">
+      <div class="next-song-brand" id="nextSongBrand">
+        <img id="nextSongBrandLogo" class="alert-logo-tint" src="/assets/bundled/njbs-logo.png" alt="" />
+        <span class="next-song-brand-text" id="nextSongBrandText"></span>
+      </div>
+      <div class="side-alert-next-body" id="sideAlertNextBody">
+        <div class="next-song-section-head">
+          <span class="next-song-label">UP NEXT</span>
+          <h2 class="next-song-head">다음 곡</h2>
+        </div>
+        <ul class="next-song-list" id="nextSongList"></ul>
+        <p class="next-song-credit">Made by 신재원, 정규환</p>
+      </div>
+      <div class="side-alert-now-body" id="sideAlertNowBody">
+        <span class="next-song-label">NOW PLAYING</span>
+        <p class="now-playing-line" id="nowPlayingText"></p>
+      </div>
+      <div class="side-alert-msg-body" id="sideAlertMsgBody">
+        <p class="side-alert-msg-line" id="sideAlertMsgText"></p>
+      </div>
+    </div>
+  </div>
 
   <script>
     (function () {
@@ -328,14 +470,24 @@
 
       var localVideo = document.getElementById("localVideo");
       var endScreen = document.getElementById("endScreen");
-      var toast = document.getElementById("toast");
+      var nextSongPanel = document.getElementById("nextSongPanel");
+      var nowPlayingText = document.getElementById("nowPlayingText");
+      var sideAlertMsgText = document.getElementById("sideAlertMsgText");
+      var nextSongList = document.getElementById("nextSongList");
+      var nextSongBrand = document.getElementById("nextSongBrand");
+      var nextSongBrandLogo = document.getElementById("nextSongBrandLogo");
+      var nextSongBrandText = document.getElementById("nextSongBrandText");
       var ytContainer = document.getElementById("ytContainer");
       var audioUnlockEl = document.getElementById("audioUnlock");
-      var broadcastCreditEl = document.getElementById("broadcastCredit");
       var audioUnlocked = false;
       var toastHideTimer = null;
-      var NEXT_ALERT_DURATION = 7000;
+      var nextAlertLogo = "/assets/bundled/njbs-logo.png";
+      var DEFAULT_NEXT_ALERT_TEXT = "\uC911\uB3D9\uC911\uD559\uAD50 \uBC29\uC1A1\uBD80";
+      var nextAlertText = DEFAULT_NEXT_ALERT_TEXT;
+      var nextAlertTheme = "light";
+      var nowPlayingTheme = "light";
       var NEXT_ALERT_MAX_SONGS = 3;
+      var NOW_PLAYING_PANEL_MS = 5500;
 
       function escapeHtml(s) {
         var d = document.createElement("div");
@@ -353,54 +505,247 @@
         return list;
       }
 
-      function setBroadcastCreditVisible(visible) {
-        if (broadcastCreditEl) broadcastCreditEl.classList.toggle("show", !!visible);
+      function assetPublicUrl(path) {
+        if (!path) return "";
+        if (path.indexOf("http://") === 0 || path.indexOf("https://") === 0) return path;
+        return path.indexOf("/") === 0 ? path : "/" + path.replace(/^\/+/, "");
       }
 
-      function hideToast() {
+      function applySidePanelTheme() {
+        if (!nextSongPanel) return;
+        var theme =
+          nextSongPanel.classList.contains("mode-now") ? nowPlayingTheme : nextAlertTheme;
+        nextSongPanel.classList.remove("theme-dark", "theme-light");
+        nextSongPanel.classList.add(theme === "light" ? "theme-light" : "theme-dark");
+      }
+
+      function applyAlertThemes(cfg) {
+        if (cfg) {
+          if (cfg.next_alert_theme !== undefined) {
+            nextAlertTheme = cfg.next_alert_theme === "light" ? "light" : "dark";
+          }
+          if (cfg.now_playing_theme !== undefined) {
+            nowPlayingTheme = cfg.now_playing_theme === "light" ? "light" : "dark";
+          }
+        }
+        applySidePanelTheme();
+      }
+
+      function applyNextAlertBranding(cfg) {
+        if (cfg) {
+          if (cfg.next_alert_logo !== undefined) {
+            nextAlertLogo = cfg.next_alert_logo || "/assets/bundled/njbs-logo.png";
+          }
+          if (cfg.next_alert_text !== undefined) {
+            var t = (cfg.next_alert_text || "").trim();
+            nextAlertText = t || DEFAULT_NEXT_ALERT_TEXT;
+          }
+          applyAlertThemes(cfg);
+        }
+        var hasLogo = !!nextAlertLogo;
+        var hasText = !!nextAlertText;
+        if (nextSongBrand) nextSongBrand.hidden = !hasLogo && !hasText;
+        if (nextSongBrandLogo && hasLogo) {
+          nextSongBrandLogo.src = assetPublicUrl(nextAlertLogo);
+          nextSongBrandLogo.style.display = "";
+        }
+        if (nextSongBrandText) {
+          nextSongBrandText.textContent = nextAlertText;
+          nextSongBrandText.hidden = !hasText;
+        }
+      }
+
+      function setSidePanelMode(mode) {
+        if (!nextSongPanel) return;
+        nextSongPanel.classList.remove("mode-next", "mode-now", "mode-msg");
+        if (mode === "now") nextSongPanel.classList.add("mode-now");
+        else if (mode === "msg") nextSongPanel.classList.add("mode-msg");
+        else nextSongPanel.classList.add("mode-next");
+        applySidePanelTheme();
+      }
+
+      function hideNextSongPanel(skipAnim) {
+        if (!nextSongPanel) return;
+        if (skipAnim || !nextSongPanel.classList.contains("show")) {
+          nextSongPanel.classList.remove("show", "mode-now", "mode-msg");
+          nextSongPanel.classList.add("mode-next");
+          nextSongPanel.setAttribute("aria-hidden", "true");
+          return;
+        }
+        var hideDone = false;
+        function finishHide() {
+          if (hideDone) return;
+          hideDone = true;
+          nextSongPanel.classList.remove("mode-now", "mode-msg");
+          nextSongPanel.classList.add("mode-next");
+          nextSongPanel.setAttribute("aria-hidden", "true");
+        }
+        var onEnd = function (e) {
+          if (e.target !== nextSongPanel || e.propertyName !== "transform") return;
+          nextSongPanel.removeEventListener("transitionend", onEnd);
+          finishHide();
+        };
+        nextSongPanel.addEventListener("transitionend", onEnd);
+        nextSongPanel.classList.remove("show");
+        setTimeout(finishHide, 700);
+      }
+
+      function clearAlertTimer() {
         if (toastHideTimer) {
           clearTimeout(toastHideTimer);
           toastHideTimer = null;
         }
-        toast.classList.remove("show");
-        setBroadcastCreditVisible(false);
+      }
+
+      function hideAllAlerts() {
+        clearAlertTimer();
+        hideNextSongPanel(true);
+      }
+
+      function showPanelMessage(msg, duration) {
+        duration = duration || 3500;
+        if (!nextSongPanel || !sideAlertMsgText) return;
+        clearAlertTimer();
+        applyNextAlertBranding(null);
+        sideAlertMsgText.textContent = msg;
+        var keepVisible =
+          nextSongPanel.classList.contains("show") &&
+          (nextSongPanel.classList.contains("mode-next") ||
+            nextSongPanel.classList.contains("mode-now"));
+        if (keepVisible) {
+          setSidePanelMode("msg");
+          nextSongPanel.setAttribute("aria-hidden", "false");
+        } else {
+          slideInSidePanel("msg");
+        }
+        toastHideTimer = setTimeout(function () {
+          hideNextSongPanel(false);
+          toastHideTimer = null;
+        }, duration);
       }
 
       function showToast(msg, duration) {
-        duration = duration || 3500;
-        if (toastHideTimer) clearTimeout(toastHideTimer);
-        toast.classList.remove("toast-simple");
-        toast.innerHTML = "";
-        toast.textContent = msg;
-        toast.classList.add("toast-simple", "show");
-        setBroadcastCreditVisible(false);
-        toastHideTimer = setTimeout(hideToast, duration);
+        showPanelMessage(msg, duration);
       }
 
-      function buildNextSongsAlertHtml(entries) {
-        var html = '<p class="toast-next-head">다음 곡</p><ul class="toast-next-list">';
+      function resolveSongThumbnail(entry) {
+        if (!entry || typeof entry === "string") return "";
+        var thumb = (entry.thumbnail || "").trim();
+        if (thumb) return thumb;
+        if (entry.type === "youtube" && entry.id) {
+          return "https://i.ytimg.com/vi/" + entry.id + "/mqdefault.jpg";
+        }
+        return "";
+      }
+
+      function buildNextSongListItems(entries) {
+        var html = "";
         for (var i = 0; i < entries.length; i++) {
           var title = typeof entries[i] === "string" ? entries[i] : (entries[i].title || "");
-          html +=
-            '<li><span class="toast-next-badge">' +
+          var badge =
+            '<span class="next-song-badge">' +
             (i + 1) +
-            '</span><span class="toast-next-title">' +
+            '</span><span class="next-song-title">' +
             escapeHtml(title) +
-            "</span></li>";
+            "</span>";
+          if (i === 0) {
+            var thumb = resolveSongThumbnail(entries[i]);
+            if (thumb) {
+              html +=
+                '<li class="next-song-item next-song-item--featured">' +
+                '<div class="next-song-card-row">' +
+                badge +
+                "</div>" +
+                '<div class="next-song-thumb-wrap">' +
+                '<img class="next-song-thumb" src="' +
+                escapeHtml(thumb) +
+                '" alt="" onerror="this.closest(\'.next-song-thumb-wrap\').hidden=true" />' +
+                "</div></li>";
+              continue;
+            }
+          }
+          html += '<li class="next-song-item">' + badge + "</li>";
         }
-        html += "</ul>";
         return html;
       }
 
+      function slideInSidePanel(mode) {
+        setSidePanelMode(mode);
+        nextSongPanel.classList.remove("show");
+        void nextSongPanel.offsetWidth;
+        nextSongPanel.setAttribute("aria-hidden", "false");
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            nextSongPanel.classList.add("show");
+          });
+        });
+      }
+
+      function showNextSongsPanel(entries) {
+        if (!entries || !entries.length || !nextSongPanel || !nextSongList) return;
+        clearAlertTimer();
+        applyNextAlertBranding(null);
+        nextSongList.innerHTML = buildNextSongListItems(
+          entries.slice(0, NEXT_ALERT_MAX_SONGS)
+        );
+        slideInSidePanel("next");
+      }
+
       function showNextSongsAlert() {
-        var upcoming = getUpcomingSongs(NEXT_ALERT_MAX_SONGS);
-        if (!upcoming.length) return;
-        if (toastHideTimer) clearTimeout(toastHideTimer);
-        toast.classList.remove("toast-simple");
-        toast.innerHTML = buildNextSongsAlertHtml(upcoming);
-        toast.classList.add("show");
-        setBroadcastCreditVisible(true);
-        toastHideTimer = setTimeout(hideToast, NEXT_ALERT_DURATION);
+        showNextSongsPanel(getUpcomingSongs(NEXT_ALERT_MAX_SONGS));
+      }
+
+      function scheduleNowPlayingHide() {
+        clearAlertTimer();
+        toastHideTimer = setTimeout(function () {
+          if (
+            nextSongPanel &&
+            nextSongPanel.classList.contains("show") &&
+            nextSongPanel.classList.contains("mode-now")
+          ) {
+            hideNextSongPanel(false);
+          }
+          toastHideTimer = null;
+        }, NOW_PLAYING_PANEL_MS);
+      }
+
+      function showNowPlayingToast(title, opts) {
+        if (!nextSongPanel || !nowPlayingText) return;
+        opts = opts || {};
+        applyNextAlertBranding(null);
+        nowPlayingText.textContent =
+          "\u25B6 \uC9C0\uAE08 \uC7AC\uC0DD: " + (title || "");
+        var alreadyNow =
+          nextSongPanel.classList.contains("show") &&
+          nextSongPanel.classList.contains("mode-now");
+        var morphFromNext =
+          nextSongPanel.classList.contains("show") &&
+          nextSongPanel.classList.contains("mode-next");
+        if (opts.extend && alreadyNow) {
+          nextSongPanel.setAttribute("aria-hidden", "false");
+          scheduleNowPlayingHide();
+          return;
+        }
+        if (morphFromNext) {
+          setSidePanelMode("now");
+          nextSongPanel.setAttribute("aria-hidden", "false");
+        } else if (!alreadyNow) {
+          slideInSidePanel("now");
+        } else {
+          nextSongPanel.setAttribute("aria-hidden", "false");
+        }
+        scheduleNowPlayingHide();
+      }
+
+      function hideAlertsForExternalPlayback() {
+        if (
+          !nextSongPanel ||
+          !nextSongPanel.classList.contains("show") ||
+          nextSongPanel.classList.contains("mode-now")
+        ) {
+          return;
+        }
+        hideNextSongPanel(true);
       }
 
       function destroyYtPlayer() {
@@ -480,7 +825,7 @@
 
       function showPlaybackErrorAlert(err) {
         if (!playbackErrorAlert) return;
-        hideToast();
+        hideAllAlerts();
         if (playbackErrorMessage) {
           playbackErrorMessage.textContent = err.message || "재생 오류가 발생했습니다.";
         }
@@ -864,7 +1209,7 @@
             (item && item.title) || "YouTube 영상";
         }
         if (el) el.classList.add("show");
-        hideToast();
+        hideAlertsForExternalPlayback();
       }
 
       function hideExternalPlaybackOverlay() {
@@ -936,6 +1281,7 @@
         } else {
           showAudioUnlockOverlay();
         }
+        showNowPlayingToast(item.title, { extend: true });
       }
 
       function onPlayerError(event) {
@@ -1091,6 +1437,14 @@
         var item = playlist[currentIndex];
         if (!item) return;
 
+        if (
+          nextSongPanel &&
+          nextSongPanel.classList.contains("show") &&
+          nextSongPanel.classList.contains("mode-next")
+        ) {
+          showNowPlayingToast(item.title);
+        }
+
         songFinishedSent = false;
         ytErrorRetried = false;
 
@@ -1172,6 +1526,7 @@
       }
 
       function showEndScreen() {
+        hideAllAlerts();
         hidePlayers();
         clearInterval(progressTimer);
         clearInterval(ytPollTimer);
@@ -1214,6 +1569,7 @@
 
       socket.on("config", function (cfg) {
         endImagePath = cfg.end_broadcast_image || "";
+        applyNextAlertBranding(cfg || {});
       });
 
       socket.on("playback_seek", function (data) {
@@ -1365,22 +1721,12 @@
         showToast("\uD83C\uDFB5 " + data.title + "\uC774(\uAC00) \uD50C\uB808\uC774\uB9AC\uC2A4\uD2B8\uC5D0 \uCD94\uAC00\uB418\uC5C8\uC2B5\uB2C8\uB2E4");
       });
 
-      socket.on("next_song_alert", function (data) {
-        if (data && data.titles && data.titles.length) {
-          if (toastHideTimer) clearTimeout(toastHideTimer);
-          toast.classList.remove("toast-simple");
-          var titles = data.titles.slice(0, NEXT_ALERT_MAX_SONGS);
-          toast.innerHTML = buildNextSongsAlertHtml(titles);
-          toast.classList.add("show");
-          setBroadcastCreditVisible(true);
-          toastHideTimer = setTimeout(hideToast, NEXT_ALERT_DURATION);
-        } else {
-          showNextSongsAlert();
-        }
+      socket.on("next_song_alert", function () {
+        showNextSongsAlert();
       });
 
       socket.on("now_playing_toast", function (data) {
-        showToast("\u25B6 \uC9C0\uAE08 \uC7AC\uC0DD: " + (data.title || ""), 2800);
+        showNowPlayingToast(data.title || "");
       });
 
       function requestBroadcastStop() {

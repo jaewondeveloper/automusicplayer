@@ -895,6 +895,22 @@ body:not(.has-win-chrome) .app-shell {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
 }
 
+.alert-logo-preview {
+  max-height: 96px;
+}
+
+.end-image-preview-wrap.preview-on-dark {
+  background: #1a2234;
+}
+
+.end-image-preview-wrap.preview-on-dark .alert-logo-preview {
+  filter: brightness(0) invert(1);
+}
+
+.end-image-preview-wrap.preview-on-light .alert-logo-preview {
+  filter: brightness(0);
+}
+
 .card-danger {
   border: 1px solid rgba(240, 68, 82, 0.2);
 }
