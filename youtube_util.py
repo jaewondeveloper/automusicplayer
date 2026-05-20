@@ -27,12 +27,11 @@ _YT_EXTRACTOR_ARGS = {
     }
 }
 
-# 1080p 우선 (방송 화면 <video> 폴백용)
+# 최고 화질 우선 (가능한 경우 영상+음성 스트림을 먼저 선택)
 _YT_FORMAT_CANDIDATES = (
-    "bestvideo[height<=1080][vcodec!=none][ext=mp4]+bestaudio[acodec!=none][ext=m4a]/"
+    "bestvideo[vcodec!=none][ext=mp4]+bestaudio[acodec!=none][ext=m4a]/"
+    "bestvideo[vcodec!=none]+bestaudio[acodec!=none]/"
     "bestvideo[height<=1080][vcodec!=none]+bestaudio[acodec!=none]/"
-    "bestvideo[height<=720][vcodec!=none]+bestaudio[acodec!=none]/"
-    "best[height<=1080][acodec!=none][vcodec!=none]/"
     "best[acodec!=none][vcodec!=none]/"
     "best",
 )
