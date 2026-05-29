@@ -6,6 +6,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Flask](https://img.shields.io/badge/Flask-3.0-000000?logo=flask)](https://flask.palletsprojects.com/)
 [![D1 Database](https://img.shields.io/badge/D1-Database-F38020?logo=cloudflare)](https://developers.cloudflare.com/d1/)
+![License: All Rights Reserved](https://img.shields.io/badge/license-All%20Rights%20Reserved-red)
 
 ---
 
