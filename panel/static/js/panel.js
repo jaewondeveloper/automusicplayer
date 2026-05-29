@@ -1230,7 +1230,7 @@
       const scanHint = $("#ytdlpScanHint");
       if (scanHint && data.youtube_embed_only !== false) {
         scanHint.textContent =
-          "YouTube 퍼가기(최고 화질) — 방송 시 yt-dlp 다운로드 없이 재생합니다.";
+          "방송 시작 시 방송 화면에서 임베드 검사 후, YouTube 퍼가기(최고 화질)로 재생합니다.";
       }
     } catch (_) {}
   }
@@ -1260,7 +1260,7 @@
         const scanHint = $("#ytdlpScanHint");
         if (scanHint) {
           scanHint.textContent = data.youtube_embed_only
-            ? "YouTube 퍼가기(최고 화질) — 방송 시 yt-dlp 다운로드 없이 재생합니다."
+            ? "방송 시작 시 방송 화면에서 임베드 검사 후, YouTube 퍼가기(최고 화질)로 재생합니다."
             : "방송 시작 시 방송 화면에서 임베드 검사 후, 필요한 곡만 고화질로 받습니다.";
         }
         if (hint) {

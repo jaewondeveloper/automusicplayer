@@ -901,13 +901,6 @@ def _scan_one_youtube_item(item: dict[str, Any]) -> dict[str, Any]:
     video_id = str(item.get("id") or "").strip()
     if not video_id:
         return {"checked": False, "required": False, "reason": "missing_id"}
-    if youtube_embed_only():
-        return {
-            "checked": True,
-            "required": False,
-            "reason": "embed_only",
-            "ytdlp_probe_ok": True,
-        }
     try:
         inspect_info = inspect_youtube_playback_mode(video_id)
         return {
@@ -991,7 +984,9 @@ def _scan_playlist_for_ytdlp_required(
                 item["ytdlp_checked"] = False
                 item["ytdlp_required"] = False
                 item["ytdlp_reason"] = "pending_scan"
-            if item["ytdlp_required"]:
+            if youtube_embed_only():
+                item["ytdlp_required"] = False
+            elif item["ytdlp_required"]:
                 required_count += 1
         merged.append(item)
 
@@ -1158,7 +1153,9 @@ def _apply_embed_scan_results(results: list[dict[str, Any]]) -> int:
                 item["ytdlp_checked"] = True
                 item["ytdlp_required"] = False
                 item["ytdlp_reason"] = "no_probe"
-            if item["ytdlp_required"]:
+            if youtube_embed_only():
+                item["ytdlp_required"] = False
+            elif item["ytdlp_required"]:
                 required_count += 1
         merged.append(item)
     broadcast_state.set_playlist(merged)
@@ -1176,34 +1173,6 @@ def _prepare_broadcast_youtube(display_index: int, prep_token: int) -> None:
             raise BroadcastPrepAborted()
 
     phase = "방송 시작 전"
-
-    if youtube_embed_only():
-        _clear_ytdlp_required_for_playlist()
-        _abort_if_cancelled()
-        enqueue_panel_window_command("minimize")
-        _emit_ytdlp_scan_progress(
-            0,
-            1,
-            "YouTube 퍼가기 (최고 화질) 준비 중…",
-            True,
-            include_broadcast=True,
-            phase=phase,
-        )
-        _abort_if_cancelled()
-        if not _restart_broadcast_window(display_index, embed_scan=False):
-            raise RuntimeError(
-                "방송 창을 열 수 없습니다. Edge 또는 Chrome이 설치되어 있는지 확인해 주세요."
-            )
-        _emit_ytdlp_scan_progress(
-            1,
-            1,
-            "준비 완료 · 방송 시작",
-            True,
-            include_broadcast=True,
-            phase=phase,
-        )
-        socketio.emit("embed_scan_done", {}, namespace="/broadcast")
-        return
     youtube_jobs = [
         {"id": str(row.get("id") or "").strip(), "title": str(row.get("title") or "")}
         for row in broadcast_state.get_playlist_dicts()
@@ -1310,14 +1279,24 @@ def _prepare_broadcast_youtube(display_index: int, prep_token: int) -> None:
     with _embed_scan_lock:
         _embed_scan_pending_payload = None
     _abort_if_cancelled()
-    _emit_ytdlp_scan_progress(
-        0,
-        1,
-        "고화질 영상 다운로드 시작…",
-        True,
-        include_broadcast=True,
-        phase="방송준비중",
-    )
+    if youtube_embed_only():
+        _emit_ytdlp_scan_progress(
+            0,
+            1,
+            "임베드 검사 완료 · YouTube 퍼가기(최고 화질)로 재생합니다",
+            True,
+            include_broadcast=True,
+            phase="방송준비중",
+        )
+    else:
+        _emit_ytdlp_scan_progress(
+            0,
+            1,
+            "고화질 영상 다운로드 시작…",
+            True,
+            include_broadcast=True,
+            phase="방송준비중",
+        )
     _download_ytdlp_required_in_playlist(
         phase=phase,
         include_broadcast=True,
