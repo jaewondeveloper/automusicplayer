@@ -1226,44 +1226,42 @@ def _prepare_broadcast_youtube(display_index: int, prep_token: int) -> None:
                 phase=phase,
             )
     _abort_if_cancelled()
+    scan_label = (
+        f"방송 화면에서 임베드 재생 검사 준비… (YouTube {total}곡)"
+        if total
+        else "방송 화면에서 임베드 재생 검사 준비…"
+    )
     _emit_ytdlp_scan_progress(
         0,
         max(total, 1),
-        "방송 화면에서 임베드 재생 검사 준비…",
+        scan_label,
         True,
         include_broadcast=True,
         phase=phase,
     )
 
-    if not _restart_broadcast_window(display_index, embed_scan=True):
+    if not _restart_broadcast_window(display_index, embed_scan=True, timeout=60.0):
         raise RuntimeError(
             "방송 창을 열 수 없습니다. Edge 또는 Chrome이 설치되어 있는지 확인해 주세요."
         )
     _abort_if_cancelled()
 
-    for _ in range(160):
+    # 메타데이터 대체 검사 없음 — 방송 화면 임베드 검사만 사용 (최대 약 90초 대기)
+    ready_deadline = time.time() + 90.0
+    while time.time() < ready_deadline:
         _abort_if_cancelled()
         if _embed_scan_broadcast_ready:
             break
         time.sleep(0.25)
     else:
         get_logger().warning(
-            "broadcast not ready for embed scan; using metadata fallback"
+            "embed scan broadcast_ready slow; will push embed_scan_start anyway"
         )
-        with _embed_scan_lock:
-            _embed_scan_pending_payload = None
-        _scan_playlist_for_ytdlp_required(phase=phase, include_broadcast=True)
-        _download_ytdlp_required_in_playlist(
-            phase=phase,
-            include_broadcast=True,
-            prep_token=prep_token,
-        )
-        return
 
     _abort_if_cancelled()
-    if not _embed_scan_client_ready.wait(timeout=15.0):
+    if not _embed_scan_client_ready.wait(timeout=30.0):
         get_logger().warning("embed scan client_ready timeout; pushing scan start")
-        socketio.emit("embed_scan_start", scan_payload, namespace="/broadcast")
+    socketio.emit("embed_scan_start", scan_payload, namespace="/broadcast")
     timeout = max(180.0, total * 20.0)
     deadline = time.time() + timeout
     while time.time() < deadline:

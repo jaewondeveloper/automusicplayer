@@ -679,6 +679,7 @@
       }
       var EMBED_SCAN = /(?:\?|&)embed_scan=1(?:&|$)/.test(location.search);
       var embedScanMode = EMBED_SCAN;
+      var embedScanClientReadySent = false;
       var POST_PLAYBACK = /(?:\?|&)playback=1(?:&|$)/.test(location.search);
       var embedScanQueue = [];
       var embedScanResults = [];
@@ -2515,9 +2516,9 @@
       }
 
       socket.on("embed_scan_start", function (data) {
-        if (embedScanMode || (data && data.videos)) {
-          startEmbedScan(data || {});
-        }
+        embedScanMode = true;
+        if (socket.connected) signalEmbedScanClientReady();
+        startEmbedScan(data || {});
       });
 
       socket.on("embed_scan_done", function () {
@@ -2536,7 +2537,8 @@
       });
 
       function signalEmbedScanClientReady() {
-        if (!embedScanMode) return;
+        if (embedScanClientReadySent || !socket.connected) return;
+        embedScanClientReadySent = true;
         socket.emit("embed_scan_client_ready");
       }
 
@@ -2778,7 +2780,7 @@
       window.addEventListener("keydown", handleEscapeKey, true);
 
       socket.on("connect", function () {
-        if (embedScanMode) {
+        if (embedScanMode || EMBED_SCAN) {
           signalEmbedScanClientReady();
           return;
         }

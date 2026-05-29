@@ -191,7 +191,7 @@ def normalize_youtube_iframe_quality(value: Any) -> str:
 
 
 def youtube_embed_only(cfg: dict[str, Any] | None = None) -> bool:
-    """True면 임베드 검사 후 YouTube 퍼가기만 사용 (yt-dlp 다운로드·로컬 재생 생략)."""
+    """True면 방송 화면 임베드 검사 후 YouTube 퍼가기만 사용 (yt-dlp 다운로드·로컬 재생 생략)."""
     if cfg is None:
         cfg = load_config()
     return bool(cfg.get("youtube_embed_only", True))
