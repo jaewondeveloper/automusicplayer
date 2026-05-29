@@ -1277,24 +1277,14 @@ def _prepare_broadcast_youtube(display_index: int, prep_token: int) -> None:
     with _embed_scan_lock:
         _embed_scan_pending_payload = None
     _abort_if_cancelled()
-    if youtube_embed_only():
-        _emit_ytdlp_scan_progress(
-            0,
-            1,
-            "임베드 검사 완료 · YouTube 퍼가기(최고 화질)로 재생합니다",
-            True,
-            include_broadcast=True,
-            phase="방송준비중",
-        )
-    else:
-        _emit_ytdlp_scan_progress(
-            0,
-            1,
-            "고화질 영상 다운로드 시작…",
-            True,
-            include_broadcast=True,
-            phase="방송준비중",
-        )
+    _emit_ytdlp_scan_progress(
+        0,
+        1,
+        "고화질 영상 다운로드 시작…",
+        True,
+        include_broadcast=True,
+        phase="방송준비중",
+    )
     _download_ytdlp_required_in_playlist(
         phase=phase,
         include_broadcast=True,
@@ -2077,8 +2067,7 @@ def api_youtube_playback_settings():
             }
         )
     data = request.get_json(silent=True) or {}
-    if "youtube_embed_only" in data:
-        cfg["youtube_embed_only"] = bool(data.get("youtube_embed_only"))
+    cfg["youtube_embed_only"] = False
     if "youtube_iframe_quality" in data:
         cfg["youtube_iframe_quality"] = normalize_youtube_iframe_quality(
             data.get("youtube_iframe_quality")
@@ -2086,8 +2075,6 @@ def api_youtube_playback_settings():
     save_config(cfg)
     global config_data
     config_data = cfg
-    if youtube_embed_only(cfg):
-        _clear_ytdlp_required_for_playlist()
     _emit_broadcast_ui_config()
     return jsonify(
         {
@@ -3084,3 +3071,4 @@ def start_server_thread(port: int) -> threading.Thread:
     t = threading.Thread(target=run_server, args=(port,), daemon=True)
     t.start()
     return t
+                                                                               

@@ -661,7 +661,7 @@
       var KIOSK_MODE = /(?:\?|&)kiosk=1(?:&|$)/.test(location.search);
       var YT_QUALITY_PREF = "highres";
       var YT_QUALITY_LEVELS = ["highres", "hd1440", "hd1080", "hd720", "large", "medium"];
-      var broadcastYoutubeEmbedOnly = true;
+      var broadcastYoutubeEmbedOnly = false;
 
       function normalizeYtQualityPref(q) {
         var v = String(q || "highres").toLowerCase();

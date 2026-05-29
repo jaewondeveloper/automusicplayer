@@ -1214,67 +1214,6 @@
     loadYoutubeCookiesStatus();
   }
 
-  async function loadYoutubePlaybackSettings() {
-    try {
-      const res = await fetch("/api/settings/youtube-playback", {
-        credentials: "same-origin",
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      const embedToggle = document.getElementById("youtubeEmbedOnlyToggle");
-      if (embedToggle) embedToggle.checked = data.youtube_embed_only !== false;
-      const quality = document.getElementById("youtubeIframeQuality");
-      if (quality && data.youtube_iframe_quality) {
-        quality.value = data.youtube_iframe_quality;
-      }
-      const scanHint = $("#ytdlpScanHint");
-      if (scanHint && data.youtube_embed_only !== false) {
-        scanHint.textContent =
-          "방송 시작 시 방송 화면에서 임베드 검사 후, YouTube 퍼가기(최고 화질)로 재생합니다.";
-      }
-    } catch (_) {}
-  }
-
-  function bindYoutubePlaybackSettings() {
-    const btn = document.getElementById("btnSaveYoutubePlayback");
-    const hint = document.getElementById("youtubePlaybackSaveHint");
-    if (!btn) return;
-    btn.addEventListener("click", async () => {
-      const embedToggle = document.getElementById("youtubeEmbedOnlyToggle");
-      const quality = document.getElementById("youtubeIframeQuality");
-      try {
-        const res = await fetch("/api/settings/youtube-playback", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: {
-            "Content-Type": "application/json",
-            "X-CSRFToken": csrfToken,
-          },
-          body: JSON.stringify({
-            youtube_embed_only: !!embedToggle?.checked,
-            youtube_iframe_quality: quality?.value || "highres",
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "저장 실패");
-        const scanHint = $("#ytdlpScanHint");
-        if (scanHint) {
-          scanHint.textContent = data.youtube_embed_only
-            ? "방송 시작 시 방송 화면에서 임베드 검사 후, YouTube 퍼가기(최고 화질)로 재생합니다."
-            : "방송 시작 시 방송 화면에서 임베드 검사 후, 필요한 곡만 고화질로 받습니다.";
-        }
-        if (hint) {
-          hint.textContent = "저장되었습니다. 다음 방송부터 적용됩니다.";
-          setTimeout(() => {
-            hint.textContent = "";
-          }, 2500);
-        }
-      } catch (err) {
-        showAppAlert(String(err.message || err));
-      }
-    });
-  }
-
   function updateServerStatusFromData(data) {
     const el = $("#serverStatus");
     if (!el || !data) return;
@@ -1502,13 +1441,6 @@
 
   async function maybeShowYoutubeCookiesWarning() {
     try {
-      const pbRes = await fetch("/api/settings/youtube-playback", {
-        credentials: "same-origin",
-      });
-      if (pbRes.ok) {
-        const pb = await pbRes.json();
-        if (pb.youtube_embed_only !== false) return;
-      }
       const res = await fetch("/api/youtube/cookies/status", {
         credentials: "same-origin",
       });
@@ -1535,8 +1467,6 @@
     initTabs();
     initSocket();
     initControls();
-    loadYoutubePlaybackSettings();
-    bindYoutubePlaybackSettings();
     initProgressScrub();
     setControlsEnabled(false);
     const startBtn = document.getElementById("btnBroadcastStart");

@@ -122,7 +122,7 @@ CF_DEFAULTS: dict[str, Any] = {
     "youtube_cookies_file": "",
     "youtube_allow_stream_fallback": True,
     "youtube_enforce_min_height": False,
-    "youtube_embed_only": True,
+    "youtube_embed_only": False,
     "youtube_iframe_quality": "highres",
 }
 
@@ -191,10 +191,8 @@ def normalize_youtube_iframe_quality(value: Any) -> str:
 
 
 def youtube_embed_only(cfg: dict[str, Any] | None = None) -> bool:
-    """True면 방송 화면 임베드 검사 후 YouTube 퍼가기만 사용 (yt-dlp 다운로드·로컬 재생 생략)."""
-    if cfg is None:
-        cfg = load_config()
-    return bool(cfg.get("youtube_embed_only", True))
+    """퍼가기 전용 모드 비활성(항상 임베드 검사 + yt-dlp 다운로드)."""
+    return False
 
 
 def youtube_stream_only(cfg: dict[str, Any] | None = None) -> bool:
@@ -220,7 +218,7 @@ def load_config() -> dict[str, Any]:
             "playback_error_stall_seconds": 10,
             "playback_error_recover_mode": "manual",
             "youtube_playback_mode": "iframe",
-            "youtube_embed_only": True,
+            "youtube_embed_only": False,
             "youtube_iframe_quality": "highres",
             **CF_DEFAULTS,
         }
@@ -265,8 +263,8 @@ def load_config() -> dict[str, Any]:
     if data.get("youtube_playback_mode") == "stream":
         data["youtube_playback_mode"] = "iframe"
         changed = True
-    if "youtube_embed_only" not in data:
-        data["youtube_embed_only"] = True
+    if data.get("youtube_embed_only"):
+        data["youtube_embed_only"] = False
         changed = True
     q_norm = normalize_youtube_iframe_quality(data.get("youtube_iframe_quality"))
     if data.get("youtube_iframe_quality") != q_norm:
