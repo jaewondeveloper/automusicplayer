@@ -530,7 +530,7 @@ def _manual_youtube_cookie_sources() -> list[Path]:
 
 
 def import_youtube_cookies_file(source: Path | str | None = None) -> bool:
-    """수동 export 한 cookies.txt 를 앱 저장 위치로 복사."""
+    """수동 export 한 쿠키 파일(파일명 무관)을 앱 저장 위치로 복사."""
     dest = default_youtube_cookies_path()
     dest.parent.mkdir(parents=True, exist_ok=True)
     if source is not None:
@@ -541,6 +541,7 @@ def import_youtube_cookies_file(source: Path | str | None = None) -> bool:
         if not src.is_file() or src.resolve() == dest.resolve():
             continue
         if not cookiefile_has_youtube_entries(src):
+            _log.warning("youtube cookies: not a valid cookie file: %s", src)
             continue
         try:
             shutil.copy2(src, dest)
@@ -592,7 +593,7 @@ def youtube_cookie_setup_guide() -> str:
   2. 「Get cookies.txt LOCALLY」 핀 고정(선택) 후 클릭
   3. 팝업에서 아래 중 하나:
      · 「Export」 또는 「Export As」 클릭
-     · 파일 이름: youtube_cookies.txt
+     · 파일 이름은 아무 이름이나 가능 (예: cookies.txt)
      · 저장 위치 (아래 둘 중 하나):
        (권장) {dest}
        (편함) {dl}
@@ -603,13 +604,14 @@ def youtube_cookie_setup_guide() -> str:
   1. 3세대 음방시스템 앱 → 설정 탭
   2. 「YouTube 쿠키 (다운로드용)」에서
      「YouTube 쿠키 파일 가져오기」 버튼 클릭
-  3. 상태가 「저장됨」이면 성공
+  3. 파일 탐색기에서 저장한 txt 파일 선택 (이름·경로 무관)
+  4. 상태가 「저장됨」이면 성공
   4. 방송 시작
 
 【 주의 】
   · 쿠키 파일을 다른 사람에게 보내지 마세요 (비밀번호와 같습니다)
   · 로그인이 풀리면 2~3단계를 다시 하세요
-  · 「쿠키 파일 가져오기」는 다운로드 폴더의 youtube_cookies.txt 도 자동으로 찾습니다
+  · 「쿠키 파일 가져오기」로 PC 어디에 있든 txt 파일을 선택할 수 있습니다
 
 【 안 될 때 】
   · 파일 첫 줄이 # Netscape HTTP Cookie File 인지 확인

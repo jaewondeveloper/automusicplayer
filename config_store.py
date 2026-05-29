@@ -82,9 +82,31 @@ def bundled_assets_dir() -> Path:
     return bundle_dir() / "assets" / "bundled"
 
 
+def get_exe_dir() -> Path:
+    """배포 exe가 있는 폴더 (개발 시 프로젝트 루트)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
 def ensure_dirs() -> None:
-    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+    """앱 데이터·캐시·로그 폴더를 첫 실행 시 모두 생성."""
+    INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+    for path in (
+        UPLOADS_DIR,
+        ASSETS_DIR,
+        ASSETS_DIR / "bundled",
+        INSTALL_DIR / "logs",
+        INSTALL_DIR / "ytdlp_broadcast",
+        INSTALL_DIR / "yt-dlp-cache",
+    ):
+        path.mkdir(parents=True, exist_ok=True)
+    keep = UPLOADS_DIR / ".gitkeep"
+    if not keep.exists():
+        try:
+            keep.touch()
+        except OSError:
+            pass
 
 
 CF_DEFAULTS: dict[str, Any] = {
@@ -100,7 +122,13 @@ CF_DEFAULTS: dict[str, Any] = {
     "youtube_cookies_file": "",
     "youtube_allow_stream_fallback": True,
     "youtube_enforce_min_height": False,
+    "youtube_embed_only": True,
+    "youtube_iframe_quality": "highres",
 }
+
+YOUTUBE_IFRAME_QUALITIES = frozenset(
+    {"highres", "hd1440", "hd1080", "hd720", "large", "medium"}
+)
 
 BRANDING_DEFAULTS: dict[str, Any] = {
     "next_alert_logo": DEFAULT_NEXT_ALERT_LOGO,
@@ -157,6 +185,18 @@ def normalize_youtube_playback_mode(value: Any) -> str:
     return mode
 
 
+def normalize_youtube_iframe_quality(value: Any) -> str:
+    q = str(value or "highres").strip().lower()
+    return q if q in YOUTUBE_IFRAME_QUALITIES else "highres"
+
+
+def youtube_embed_only(cfg: dict[str, Any] | None = None) -> bool:
+    """True면 YouTube 퍼가기만 사용 (yt-dlp 다운로드·임베드 검사 생략)."""
+    if cfg is None:
+        cfg = load_config()
+    return bool(cfg.get("youtube_embed_only", True))
+
+
 def youtube_stream_only(cfg: dict[str, Any] | None = None) -> bool:
     """True면 스트리밍 전용(stream 모드). iframe/download 는 퍼가기·로컬 파일."""
     if cfg is None:
@@ -180,6 +220,8 @@ def load_config() -> dict[str, Any]:
             "playback_error_stall_seconds": 10,
             "playback_error_recover_mode": "manual",
             "youtube_playback_mode": "iframe",
+            "youtube_embed_only": True,
+            "youtube_iframe_quality": "highres",
             **CF_DEFAULTS,
         }
         save_config(cfg)
@@ -223,6 +265,13 @@ def load_config() -> dict[str, Any]:
     if data.get("youtube_playback_mode") == "stream":
         data["youtube_playback_mode"] = "iframe"
         changed = True
+    if "youtube_embed_only" not in data:
+        data["youtube_embed_only"] = True
+        changed = True
+    q_norm = normalize_youtube_iframe_quality(data.get("youtube_iframe_quality"))
+    if data.get("youtube_iframe_quality") != q_norm:
+        data["youtube_iframe_quality"] = q_norm
+        changed = True
     env_cookies = str(os.getenv("YTDLP_COOKIES", "") or "").strip()
     if env_cookies and not str(data.get("youtube_cookies_file") or "").strip():
         data["youtube_cookies_file"] = env_cookies
@@ -233,13 +282,17 @@ def load_config() -> dict[str, Any]:
 
 
 def broadcast_ui_config(cfg: dict[str, Any]) -> dict[str, Any]:
-    """방송 화면(종료·다음곡 안내)에 전달할 UI 설정."""
+    """방송 화면(종료·다음곡 안내·YouTube 재생)에 전달할 UI 설정."""
     return {
         "end_broadcast_image": cfg.get("end_broadcast_image", ""),
         "next_alert_logo": resolve_alert_logo_url(cfg.get("next_alert_logo")),
         "next_alert_text": normalize_next_alert_text(cfg.get("next_alert_text")),
         "next_alert_theme": normalize_alert_theme(cfg.get("next_alert_theme")),
         "now_playing_theme": normalize_alert_theme(cfg.get("now_playing_theme")),
+        "youtube_embed_only": youtube_embed_only(cfg),
+        "youtube_iframe_quality": normalize_youtube_iframe_quality(
+            cfg.get("youtube_iframe_quality")
+        ),
     }
 
 

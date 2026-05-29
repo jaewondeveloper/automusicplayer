@@ -46,6 +46,7 @@ from config_store import (
     is_setup_complete,
     load_config,
     normalize_alert_theme,
+    youtube_embed_only,
     youtube_stream_only,
     normalize_next_alert_logo,
     normalize_next_alert_text,
@@ -257,6 +258,25 @@ def _mark_ytdlp_download_failures(failed: list[dict[str, str]]) -> None:
         return
     for vid in failed_ids:
         _mark_video_ytdlp_download_failed(vid)
+
+
+def _clear_ytdlp_required_for_playlist() -> None:
+    """YouTube 퍼가기 전용 모드 — 플레이리스트 yt-dlp 플래그 해제."""
+    merged: list[dict[str, Any]] = []
+    changed = False
+    for item in broadcast_state.get_playlist_dicts():
+        row = dict(item)
+        if row.get("type") == "youtube":
+            if row.get("ytdlp_required") or not row.get("ytdlp_checked"):
+                row["ytdlp_required"] = False
+                row["ytdlp_checked"] = True
+                row["ytdlp_reason"] = "embed_only"
+                changed = True
+        merged.append(row)
+    if changed:
+        broadcast_state.set_playlist(merged)
+        _persist_playlist()
+        _emit_playlist()
 
 
 def _mark_video_ytdlp_download_failed(video_id: str) -> None:
@@ -509,7 +529,7 @@ def _emit_broadcast_track() -> None:
 
 def _prefetch_playlist_streams(around_index: int | None = None) -> None:
     """yt-dlp 필요 곡만 백그라운드 다운로드 (임베드 가능 곡 제외)."""
-    if youtube_stream_only():
+    if youtube_stream_only() or youtube_embed_only():
         return
     snap = broadcast_state.snapshot()
     pl = snap.get("playlist") or []
@@ -606,6 +626,8 @@ def _emit_ytdlp_local_playback(
 
 def _emit_ytdlp_playback_if_ready(index: int) -> None:
     """yt-dlp 필요 곡만 로컬/스트림 재생 (임베드 곡은 playCurrent → iframe)."""
+    if youtube_embed_only():
+        return
     if index != broadcast_state.current_index:
         return
     item = broadcast_state.current_item()
@@ -879,6 +901,13 @@ def _scan_one_youtube_item(item: dict[str, Any]) -> dict[str, Any]:
     video_id = str(item.get("id") or "").strip()
     if not video_id:
         return {"checked": False, "required": False, "reason": "missing_id"}
+    if youtube_embed_only():
+        return {
+            "checked": True,
+            "required": False,
+            "reason": "embed_only",
+            "ytdlp_probe_ok": True,
+        }
     try:
         inspect_info = inspect_youtube_playback_mode(video_id)
         return {
@@ -979,6 +1008,16 @@ def _download_ytdlp_required_in_playlist(
     prep_token: int | None = None,
 ) -> dict[str, Any]:
     """yt-dlp 필요 곡 — 방송 시작 전 고화질 다운로드."""
+    if youtube_embed_only():
+        _emit_ytdlp_scan_progress(
+            1,
+            1,
+            f"{phase} · YouTube 퍼가기 (최고 화질, 다운로드 생략)",
+            False,
+            include_broadcast=include_broadcast,
+            phase=phase,
+        )
+        return {"ok": [], "failed": [], "total": 0, "skipped": 0}
     if youtube_stream_only():
         ids = youtube_ids_from_playlist(
             broadcast_state.get_playlist_dicts(),
@@ -1137,6 +1176,34 @@ def _prepare_broadcast_youtube(display_index: int, prep_token: int) -> None:
             raise BroadcastPrepAborted()
 
     phase = "방송 시작 전"
+
+    if youtube_embed_only():
+        _clear_ytdlp_required_for_playlist()
+        _abort_if_cancelled()
+        enqueue_panel_window_command("minimize")
+        _emit_ytdlp_scan_progress(
+            0,
+            1,
+            "YouTube 퍼가기 (최고 화질) 준비 중…",
+            True,
+            include_broadcast=True,
+            phase=phase,
+        )
+        _abort_if_cancelled()
+        if not _restart_broadcast_window(display_index, embed_scan=False):
+            raise RuntimeError(
+                "방송 창을 열 수 없습니다. Edge 또는 Chrome이 설치되어 있는지 확인해 주세요."
+            )
+        _emit_ytdlp_scan_progress(
+            1,
+            1,
+            "준비 완료 · 방송 시작",
+            True,
+            include_broadcast=True,
+            phase=phase,
+        )
+        socketio.emit("embed_scan_done", {}, namespace="/broadcast")
+        return
     youtube_jobs = [
         {"id": str(row.get("id") or "").strip(), "title": str(row.get("title") or "")}
         for row in broadcast_state.get_playlist_dicts()
@@ -2016,6 +2083,46 @@ def api_onboarding():
     return jsonify({"ok": True, "complete": True})
 
 
+@app.route("/api/settings/youtube-playback", methods=["GET", "POST"])
+def api_youtube_playback_settings():
+    if not current_user.is_authenticated:
+        return jsonify({"error": "unauthorized"}), 401
+    from config_store import normalize_youtube_iframe_quality
+
+    cfg = load_config()
+    if request.method == "GET":
+        return jsonify(
+            {
+                "youtube_embed_only": youtube_embed_only(cfg),
+                "youtube_iframe_quality": normalize_youtube_iframe_quality(
+                    cfg.get("youtube_iframe_quality")
+                ),
+            }
+        )
+    data = request.get_json(silent=True) or {}
+    if "youtube_embed_only" in data:
+        cfg["youtube_embed_only"] = bool(data.get("youtube_embed_only"))
+    if "youtube_iframe_quality" in data:
+        cfg["youtube_iframe_quality"] = normalize_youtube_iframe_quality(
+            data.get("youtube_iframe_quality")
+        )
+    save_config(cfg)
+    global config_data
+    config_data = cfg
+    if youtube_embed_only(cfg):
+        _clear_ytdlp_required_for_playlist()
+    _emit_broadcast_ui_config()
+    return jsonify(
+        {
+            "ok": True,
+            "youtube_embed_only": youtube_embed_only(cfg),
+            "youtube_iframe_quality": normalize_youtube_iframe_quality(
+                cfg.get("youtube_iframe_quality")
+            ),
+        }
+    )
+
+
 @app.route("/api/settings/playback-recovery", methods=["GET", "POST"])
 def api_playback_recovery_settings():
     if not current_user.is_authenticated:
@@ -2196,6 +2303,48 @@ def api_youtube_cookies_status():
     status = youtube_cookies_status()
     status["guide"] = youtube_cookie_setup_guide()
     return jsonify(status)
+
+
+@csrf.exempt
+@app.route("/api/youtube/cookies/import", methods=["POST"])
+def api_youtube_cookies_import():
+    if not current_user.is_authenticated:
+        return jsonify({"error": "login required"}), 401
+    from youtube_util import (
+        cookiefile_has_youtube_entries,
+        import_youtube_cookies_file,
+        youtube_cookies_status,
+    )
+
+    upload = request.files.get("file")
+    if not upload or not upload.filename:
+        return jsonify({"error": "파일을 선택해 주세요."}), 400
+    import tempfile
+
+    suffix = Path(upload.filename).suffix or ".txt"
+    tmp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            upload.save(tmp.name)
+            tmp_path = tmp.name
+        src = Path(tmp_path)
+        if not cookiefile_has_youtube_entries(src):
+            return jsonify(
+                {
+                    "error": "YouTube 쿠키가 포함된 txt 파일이 아닙니다.\n"
+                    "(Netscape 형식, youtube.com 항목 필요)"
+                }
+            ), 400
+        if not import_youtube_cookies_file(tmp_path):
+            return jsonify({"error": "쿠키 파일을 저장하지 못했습니다."}), 500
+    finally:
+        if tmp_path:
+            try:
+                Path(tmp_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+    status = youtube_cookies_status()
+    return jsonify({"ok": bool(status.get("ok")), **status})
 
 
 @csrf.exempt

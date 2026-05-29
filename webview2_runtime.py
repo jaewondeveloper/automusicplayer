@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 from app_meta import EXE_NAME
-from config_store import BUNDLE_DIR, INSTALL_DIR
+from config_store import BUNDLE_DIR, INSTALL_DIR, get_exe_dir
 
 _MARKER_EXE = "msedgewebview2.exe"
 _MARKER_ALT = "msedge.exe"
@@ -78,7 +78,7 @@ def find_runtime_folder() -> Path | None:
         return None
 
     # 예전 방식: exe 옆 WebView2Runtime 폴더(폴더 배포)
-    beside_exe = _folder_with_marker(INSTALL_DIR / _RT_DIR_NAME)
+    beside_exe = _folder_with_marker(get_exe_dir() / _RT_DIR_NAME)
     if beside_exe:
         return beside_exe
 

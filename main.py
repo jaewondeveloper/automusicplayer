@@ -305,6 +305,9 @@ def _shutdown() -> None:
 
 
 def main() -> None:
+    from config_store import ensure_dirs
+
+    ensure_dirs()
     install_crash_logging()
     log = setup_panel_logging()
     log.info("main() start log=%s", panel_log_path())

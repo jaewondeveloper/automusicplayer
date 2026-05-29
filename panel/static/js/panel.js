@@ -1169,37 +1169,110 @@
     }
 
     const btnCookies = $("#btnYoutubeCookiesRefresh");
-    if (btnCookies) {
-      btnCookies.addEventListener("click", async () => {
-        btnCookies.disabled = true;
-        btnCookies.textContent = "가져오는 중…";
-        try {
-          const res = await fetch("/api/youtube/cookies/refresh", {
-            method: "POST",
-            credentials: "same-origin",
-            headers: {
-              "Content-Type": "application/json",
-              "X-CSRFToken": csrfToken,
-            },
-            body: JSON.stringify({ close_browsers: false }),
-          });
-          const data = await res.json();
-          await loadYoutubeCookiesStatus();
-          showAppAlert(
-            data.ok
-              ? "YouTube 쿠키 파일을 인식했습니다. 이제 방송을 시작할 수 있습니다."
-              : "아직 쿠키 파일이 없습니다.\n\n설정 카드의 「확장 프로그램 설치 · Export 방법」을 따라 youtube_cookies.txt 를 저장한 뒤, 이 버튼을 다시 눌러 주세요.",
-            { title: data.ok ? "완료" : "쿠키 파일 필요" }
-          );
-        } catch (err) {
-          showAppAlert(String(err.message || err), { title: "오류" });
-        } finally {
-          btnCookies.disabled = false;
-          btnCookies.textContent = "YouTube 쿠키 파일 가져오기";
+    const cookiesFileInput = $("#youtubeCookiesFileInput");
+    async function importYoutubeCookiesFile(file) {
+      if (!file) return;
+      btnCookies.disabled = true;
+      btnCookies.textContent = "가져오는 중…";
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await fetch("/api/youtube/cookies/import", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "X-CSRFToken": csrfToken },
+          body: fd,
+        });
+        const data = await res.json();
+        await loadYoutubeCookiesStatus();
+        if (!res.ok) {
+          throw new Error(data.error || "가져오기 실패");
         }
+        showAppAlert(
+          data.ok
+            ? `「${file.name}」을(를) 저장했습니다.`
+            : "YouTube 쿠키가 포함된 txt 파일인지 확인해 주세요.",
+          { title: data.ok ? "완료" : "쿠키 파일 필요" }
+        );
+      } catch (err) {
+        showAppAlert(String(err.message || err), { title: "오류" });
+      } finally {
+        btnCookies.disabled = false;
+        btnCookies.textContent = "YouTube 쿠키 파일 가져오기";
+        if (cookiesFileInput) cookiesFileInput.value = "";
+      }
+    }
+    if (btnCookies && cookiesFileInput) {
+      btnCookies.addEventListener("click", () => {
+        cookiesFileInput.click();
+      });
+      cookiesFileInput.addEventListener("change", () => {
+        const file = cookiesFileInput.files && cookiesFileInput.files[0];
+        if (file) importYoutubeCookiesFile(file);
       });
     }
     loadYoutubeCookiesStatus();
+  }
+
+  async function loadYoutubePlaybackSettings() {
+    try {
+      const res = await fetch("/api/settings/youtube-playback", {
+        credentials: "same-origin",
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const embedToggle = document.getElementById("youtubeEmbedOnlyToggle");
+      if (embedToggle) embedToggle.checked = data.youtube_embed_only !== false;
+      const quality = document.getElementById("youtubeIframeQuality");
+      if (quality && data.youtube_iframe_quality) {
+        quality.value = data.youtube_iframe_quality;
+      }
+      const scanHint = $("#ytdlpScanHint");
+      if (scanHint && data.youtube_embed_only !== false) {
+        scanHint.textContent =
+          "YouTube 퍼가기(최고 화질) — 방송 시 yt-dlp 다운로드 없이 재생합니다.";
+      }
+    } catch (_) {}
+  }
+
+  function bindYoutubePlaybackSettings() {
+    const btn = document.getElementById("btnSaveYoutubePlayback");
+    const hint = document.getElementById("youtubePlaybackSaveHint");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      const embedToggle = document.getElementById("youtubeEmbedOnlyToggle");
+      const quality = document.getElementById("youtubeIframeQuality");
+      try {
+        const res = await fetch("/api/settings/youtube-playback", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": csrfToken,
+          },
+          body: JSON.stringify({
+            youtube_embed_only: !!embedToggle?.checked,
+            youtube_iframe_quality: quality?.value || "highres",
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "저장 실패");
+        const scanHint = $("#ytdlpScanHint");
+        if (scanHint) {
+          scanHint.textContent = data.youtube_embed_only
+            ? "YouTube 퍼가기(최고 화질) — 방송 시 yt-dlp 다운로드 없이 재생합니다."
+            : "방송 시작 시 방송 화면에서 임베드 검사 후, 필요한 곡만 고화질로 받습니다.";
+        }
+        if (hint) {
+          hint.textContent = "저장되었습니다. 다음 방송부터 적용됩니다.";
+          setTimeout(() => {
+            hint.textContent = "";
+          }, 2500);
+        }
+      } catch (err) {
+        showAppAlert(String(err.message || err));
+      }
+    });
   }
 
   function updateServerStatusFromData(data) {
@@ -1429,6 +1502,13 @@
 
   async function maybeShowYoutubeCookiesWarning() {
     try {
+      const pbRes = await fetch("/api/settings/youtube-playback", {
+        credentials: "same-origin",
+      });
+      if (pbRes.ok) {
+        const pb = await pbRes.json();
+        if (pb.youtube_embed_only !== false) return;
+      }
       const res = await fetch("/api/youtube/cookies/status", {
         credentials: "same-origin",
       });
@@ -1443,8 +1523,8 @@
         "YouTube 고화질 다운로드용 쿠키 파일이 없습니다.\n\n" +
           "설정 탭 → 「YouTube 쿠키」에서\n" +
           "「확장 프로그램 설치 · Export 방법」을 따라\n" +
-          "youtube_cookies.txt 를 저장한 뒤\n" +
-          "「YouTube 쿠키 파일 가져오기」를 눌러 주세요.\n\n" +
+          "파일을 저장한 뒤\n" +
+          "「YouTube 쿠키 파일 가져오기」로 txt 파일을 선택해 주세요.\n\n" +
           "(쿠키 파일은 다른 사람에게 보내지 마세요.)",
         { title: "YouTube 쿠키 필요", okText: "확인" }
       );
@@ -1455,6 +1535,8 @@
     initTabs();
     initSocket();
     initControls();
+    loadYoutubePlaybackSettings();
+    bindYoutubePlaybackSettings();
     initProgressScrub();
     setControlsEnabled(false);
     const startBtn = document.getElementById("btnBroadcastStart");

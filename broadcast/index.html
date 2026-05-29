@@ -659,6 +659,24 @@
       });
       var ORIGIN = window.location.origin;
       var KIOSK_MODE = /(?:\?|&)kiosk=1(?:&|$)/.test(location.search);
+      var YT_QUALITY_PREF = "highres";
+      var YT_QUALITY_LEVELS = ["highres", "hd1440", "hd1080", "hd720", "large", "medium"];
+      var broadcastYoutubeEmbedOnly = true;
+
+      function normalizeYtQualityPref(q) {
+        var v = String(q || "highres").toLowerCase();
+        if (YT_QUALITY_LEVELS.indexOf(v) < 0) return "highres";
+        return v;
+      }
+
+      function qualityLevelsForPlayer() {
+        var pref = normalizeYtQualityPref(YT_QUALITY_PREF);
+        var levels = [pref];
+        for (var i = 0; i < YT_QUALITY_LEVELS.length; i++) {
+          if (YT_QUALITY_LEVELS[i] !== pref) levels.push(YT_QUALITY_LEVELS[i]);
+        }
+        return levels;
+      }
       var EMBED_SCAN = /(?:\?|&)embed_scan=1(?:&|$)/.test(location.search);
       var embedScanMode = EMBED_SCAN;
       var POST_PLAYBACK = /(?:\?|&)playback=1(?:&|$)/.test(location.search);
@@ -1267,7 +1285,7 @@
 
       function applyYoutubeQuality(player) {
         if (!player || typeof player.setPlaybackQuality !== "function") return;
-        var levels = ["highres", "hd1440", "hd1080", "hd720", "large"];
+        var levels = qualityLevelsForPlayer();
         for (var i = 0; i < levels.length; i++) {
           try {
             player.setPlaybackQuality(levels[i]);
@@ -1876,7 +1894,8 @@
             fs: 1,
             enablejsapi: 1,
             origin: ORIGIN,
-            vq: "hd1080",
+            vq: normalizeYtQualityPref(YT_QUALITY_PREF),
+            quality: normalizeYtQualityPref(YT_QUALITY_PREF),
           },
           events: {
             onReady: function (ev) {
@@ -1884,6 +1903,7 @@
               try {
                 p.mute();
                 p.playVideo();
+                applyYoutubeQuality(p);
               } catch (e) {}
               startProbePoll(p);
             },
@@ -2146,8 +2166,8 @@
             fs: 1,
             enablejsapi: 1,
             origin: ORIGIN,
-            vq: "highres",
-            quality: "highres"
+            vq: normalizeYtQualityPref(YT_QUALITY_PREF),
+            quality: normalizeYtQualityPref(YT_QUALITY_PREF),
           },
           events: {
             onReady: onPlayerReady,
@@ -2273,7 +2293,11 @@
             socket.emit("song_finished", { index: currentIndex });
             return;
           }
-          if (item.ytdlp_checked && item.ytdlp_required) {
+          if (
+            !broadcastYoutubeEmbedOnly &&
+            item.ytdlp_checked &&
+            item.ytdlp_required
+          ) {
             playYtdlpLocal(item, { showWaitingOverlay: false });
             return;
           }
@@ -2439,6 +2463,13 @@
       socket.on("config", function (cfg) {
         endImagePath = cfg.end_broadcast_image || "";
         applyNextAlertBranding(cfg || {});
+        if (cfg && cfg.youtube_iframe_quality) {
+          YT_QUALITY_PREF = normalizeYtQualityPref(cfg.youtube_iframe_quality);
+        }
+        if (cfg && cfg.youtube_embed_only !== undefined) {
+          broadcastYoutubeEmbedOnly = !!cfg.youtube_embed_only;
+        }
+        if (ytPlayer) applyYoutubeQuality(ytPlayer);
       });
 
       socket.on("playback_seek", function (data) {

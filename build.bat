@@ -91,6 +91,7 @@ echo  다른 PC에는 이 exe 파일만 복사하면 됩니다.
 echo  첫 실행 시 WebView2가 자동으로 풀립니다
 echo  ^(%LOCALAPPDATA%\3세대음방시스템\WebView2Runtime^).
 echo.
-echo  설정·플레이리스트는 exe 옆에 저장됩니다.
+echo  설정·플레이리스트·업로드·캐시는 아래에 저장됩니다:
+echo  %%LOCALAPPDATA%%\3세대음방시스템\
 echo ========================================
 pause
