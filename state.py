@@ -17,6 +17,12 @@ class PlaylistItem:
     thumbnail: str = ""
     path: str = ""  # 로컬 파일 상대 경로 (uploads/...)
     duration: float = 0  # 초 (YouTube 검색 메타·종료 타이머용)
+    ytdlp_required: bool = False
+    ytdlp_checked: bool = False
+    ytdlp_reason: str = ""
+    ytdlp_probe_ok: bool = False
+    ytdlp_probe_error: str = ""
+    ytdlp_download_failed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -26,6 +32,12 @@ class PlaylistItem:
             "thumbnail": self.thumbnail,
             "path": self.path,
             "duration": self.duration,
+            "ytdlp_required": self.ytdlp_required,
+            "ytdlp_checked": self.ytdlp_checked,
+            "ytdlp_reason": self.ytdlp_reason,
+            "ytdlp_probe_ok": self.ytdlp_probe_ok,
+            "ytdlp_probe_error": self.ytdlp_probe_error,
+            "ytdlp_download_failed": self.ytdlp_download_failed,
         }
 
     @classmethod
@@ -49,6 +61,16 @@ class PlaylistItem:
             thumbnail=data.get("thumbnail", ""),
             path=data.get("path", ""),
             duration=max(0, duration),
+            ytdlp_required=bool(
+                data.get("ytdlp_required")
+                if data.get("ytdlp_required") is not None
+                else data.get("yt_dlp_required")
+            ),
+            ytdlp_checked=bool(data.get("ytdlp_checked")),
+            ytdlp_reason=str(data.get("ytdlp_reason") or ""),
+            ytdlp_probe_ok=bool(data.get("ytdlp_probe_ok")),
+            ytdlp_probe_error=str(data.get("ytdlp_probe_error") or ""),
+            ytdlp_download_failed=bool(data.get("ytdlp_download_failed")),
         )
 
 
@@ -148,6 +170,16 @@ class BroadcastState:
                 return None
             if self.current_index < 0:
                 self.current_index = 0
+            self.playback_status = "playing"
+            self.broadcast_active = True
+            return copy.deepcopy(self.playlist[self.current_index])
+
+    def jump_to_index(self, index: int) -> PlaylistItem | None:
+        """지정 인덱스로 이동 (방송 중 지연 yt-dlp 재생용)."""
+        with self._lock:
+            if index < 0 or index >= len(self.playlist):
+                return None
+            self.current_index = index
             self.playback_status = "playing"
             self.broadcast_active = True
             return copy.deepcopy(self.playlist[self.current_index])

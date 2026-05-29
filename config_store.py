@@ -1,11 +1,16 @@
-"""config.json 로드·저장 (exe 빌드 시 실행 파일 옆에 데이터 저장)."""
+"""config.json 로드·저장 (dev·exe 모두 %LOCALAPPDATA%\\3세대음방시스템)."""
 from __future__ import annotations
 
 import json
+import os
 import secrets
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
+
+from app_meta import EXE_NAME
 
 DEFAULT_PORT = 8765
 WEBSITE_PORT = 2026
@@ -18,11 +23,36 @@ DEFAULT_ALERT_THEME = "light"
 VALID_ALERT_THEMES = frozenset({"dark", "light"})
 
 
-def get_install_dir() -> Path:
-    """설정·업로드 등 쓰기 가능 경로 (exe와 같은 폴더)."""
+def _migrate_legacy_data_files(base: Path) -> None:
+    """exe 옆·프로젝트 폴더에 있던 config/playlist를 LocalAppData로 1회 이전."""
+    legacy_dirs: list[Path] = [Path(__file__).resolve().parent]
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
+        legacy_dirs.insert(0, Path(sys.executable).resolve().parent)
+    seen: set[Path] = set()
+    for legacy in legacy_dirs:
+        try:
+            resolved = legacy.resolve()
+        except OSError:
+            continue
+        if resolved in seen or resolved == base.resolve():
+            continue
+        seen.add(resolved)
+        for fname in ("config.json", "playlist.json"):
+            src = legacy / fname
+            dst = base / fname
+            if src.is_file() and not dst.is_file():
+                try:
+                    shutil.copy2(src, dst)
+                except OSError:
+                    pass
+
+
+def get_install_dir() -> Path:
+    """설정·업로드·yt-dlp 캐시 — dev/main.py·exe 동일 (%LOCALAPPDATA%)."""
+    base = Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / EXE_NAME
+    base.mkdir(parents=True, exist_ok=True)
+    _migrate_legacy_data_files(base)
+    return base
 
 
 def get_bundle_dir() -> Path:
@@ -65,6 +95,11 @@ CF_DEFAULTS: dict[str, Any] = {
     "cf_auto_push_on_stop": False,   # push to DB when app closes (opt-in)
     "playback_error_stall_seconds": 10,
     "playback_error_recover_mode": "manual",  # manual | auto
+    # YouTube: cookies.txt 또는 브라우저명(edge/chrome) — 비우면 쿠키 없이 다운로드
+    "youtube_cookies_browser": "",
+    "youtube_cookies_file": "",
+    "youtube_allow_stream_fallback": True,
+    "youtube_enforce_min_height": False,
 }
 
 BRANDING_DEFAULTS: dict[str, Any] = {
@@ -111,6 +146,24 @@ def resolve_alert_logo_url(stored: Any) -> str:
     return f"/assets/bundled/njbs-logo.png"
 
 
+YOUTUBE_PLAYBACK_MODES = frozenset({"download", "stream", "iframe"})
+
+
+def normalize_youtube_playback_mode(value: Any) -> str:
+    """download=로컬 파일, stream=다운 없이 DASH 실시간 스트림, iframe=YouTube 퍼가기."""
+    mode = str(value or "iframe").strip().lower()
+    if mode not in YOUTUBE_PLAYBACK_MODES:
+        return "iframe"
+    return mode
+
+
+def youtube_stream_only(cfg: dict[str, Any] | None = None) -> bool:
+    """True면 스트리밍 전용(stream 모드). iframe/download 는 퍼가기·로컬 파일."""
+    if cfg is None:
+        cfg = load_config()
+    return normalize_youtube_playback_mode(cfg.get("youtube_playback_mode")) == "stream"
+
+
 def load_config() -> dict[str, Any]:
     ensure_dirs()
     if not CONFIG_PATH.exists():
@@ -126,6 +179,7 @@ def load_config() -> dict[str, Any]:
             "onboarding_complete": False,
             "playback_error_stall_seconds": 10,
             "playback_error_recover_mode": "manual",
+            "youtube_playback_mode": "iframe",
             **CF_DEFAULTS,
         }
         save_config(cfg)
@@ -155,6 +209,23 @@ def load_config() -> dict[str, Any]:
     text_norm = normalize_next_alert_text(data.get("next_alert_text"))
     if data.get("next_alert_text") != text_norm:
         data["next_alert_text"] = text_norm
+        changed = True
+    if "youtube_enforce_min_height" not in data:
+        data["youtube_enforce_min_height"] = True
+        changed = True
+    if "youtube_playback_mode" not in data:
+        data["youtube_playback_mode"] = "iframe"
+        changed = True
+    mode_norm = normalize_youtube_playback_mode(data.get("youtube_playback_mode"))
+    if data.get("youtube_playback_mode") != mode_norm:
+        data["youtube_playback_mode"] = mode_norm
+        changed = True
+    if data.get("youtube_playback_mode") == "stream":
+        data["youtube_playback_mode"] = "iframe"
+        changed = True
+    env_cookies = str(os.getenv("YTDLP_COOKIES", "") or "").strip()
+    if env_cookies and not str(data.get("youtube_cookies_file") or "").strip():
+        data["youtube_cookies_file"] = env_cookies
         changed = True
     if changed:
         save_config(data)

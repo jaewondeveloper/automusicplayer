@@ -205,6 +205,8 @@ class PlaybackRecoveryManager:
         return self._get_status_fn() == "playing"
 
     def _check_stall(self) -> None:
+        if _prep_running_check():
+            return
         if not self._playing():
             with self._lock:
                 self._track_started_at = 0.0
@@ -288,6 +290,14 @@ class PlaybackRecoveryManager:
 
     def shutdown(self) -> None:
         self._monitor_stop.set()
+
+
+_prep_running_check: Callable[[], bool] = lambda: False
+
+
+def set_prep_running_check(fn: Callable[[], bool]) -> None:
+    global _prep_running_check
+    _prep_running_check = fn
 
 
 playback_recovery = PlaybackRecoveryManager()

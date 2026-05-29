@@ -8,6 +8,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -45,6 +46,7 @@ from config_store import (
     is_setup_complete,
     load_config,
     normalize_alert_theme,
+    youtube_stream_only,
     normalize_next_alert_logo,
     normalize_next_alert_text,
     resolve_alert_logo_url,
@@ -57,14 +59,28 @@ from playback_recovery import (
     bump_stream_generation,
     current_stream_generation,
     playback_recovery,
+    set_prep_running_check,
 )
-from youtube_prefetch import schedule_youtube_prefetch
+from youtube_download_cache import (
+    clear_ytdlp_broadcast_downloads,
+    download_youtube_videos_sync,
+    ensure_youtube_downloaded,
+    get_download_entry,
+    is_download_ready,
+    local_playback_url,
+    schedule_ytdlp_downloads,
+    schedule_ytdlp_downloads_for_playlist,
+    youtube_ids_from_playlist,
+)
 from playlist_store import load_playlist, save_playlist
 from state import BroadcastState
 from youtube_search import search_youtube
 from youtube_util import (
+    YT_MIN_DOWNLOAD_HEIGHT,
+    fetch_youtube_progressive_stream,
     fetch_youtube_stream_info,
     fetch_youtube_video_meta,
+    inspect_youtube_playback_mode,
     parse_youtube_video_id,
 )
 
@@ -76,7 +92,26 @@ broadcast_command_queue: queue.Queue | None = None
 _panel_sids: set[str] = set()
 _panel_sids_lock = threading.Lock()
 _yt_stream_cache: dict[str, dict[str, Any]] = {}
+_yt_progressive_cache: dict[str, dict[str, Any]] = {}
+_yt_dash_cache: dict[str, dict[str, Any]] = {}
 _yt_stream_cache_lock = threading.Lock()
+_ytdlp_scan_lock = threading.Lock()
+_ytdlp_scan_running = False
+_ytdlp_scan_pending = False
+YTDLP_SCAN_MAX_WORKERS = 6
+
+_embed_scan_lock = threading.Lock()
+_embed_scan_done = threading.Event()
+_embed_scan_results: list[dict[str, Any]] = []
+_embed_scan_broadcast_ready = False
+_embed_scan_pending_payload: dict[str, Any] | None = None
+_embed_scan_client_ready = threading.Event()
+_prep_token = 0
+EMBED_PROBE_SECONDS = 4
+
+
+class BroadcastPrepAborted(Exception):
+    """방송 준비 중 사용자가 종료했거나 새 준비가 시작됨."""
 
 app = Flask(
     __name__,
@@ -157,8 +192,250 @@ def _stop_broadcast_playback() -> None:
     if broadcast_command_queue:
         broadcast_command_queue.put({"action": "close_broadcast"})
     broadcast_state.stop()
+    bump_stream_generation()
     _emit_now_playing()
     _emit_playback_status()
+
+
+def _prep_alive(token: int) -> bool:
+    with _ytdlp_scan_lock:
+        return token == _prep_token
+
+
+def _queue_broadcast_window(
+    display_index: int,
+    *,
+    embed_scan: bool = False,
+    wait_open: bool = False,
+) -> None:
+    if broadcast_command_queue:
+        broadcast_command_queue.put(
+            {
+                "action": "open_broadcast",
+                "display_index": display_index,
+                "embed_scan": embed_scan,
+                "wait_open": wait_open,
+            }
+        )
+
+
+def _close_broadcast_window() -> None:
+    if broadcast_command_queue:
+        broadcast_command_queue.put({"action": "close_broadcast"})
+
+
+def _close_broadcast_window_and_wait(timeout: float = 20.0) -> None:
+    if not broadcast_command_queue:
+        return
+    done = threading.Event()
+    broadcast_command_queue.put({"action": "close_broadcast", "done": done})
+    done.wait(timeout=timeout)
+
+
+def _clear_ytdlp_download_failed_flags() -> None:
+    pl = broadcast_state.get_playlist_dicts()
+    merged: list[dict[str, Any]] = []
+    changed = False
+    for row in pl:
+        item = dict(row)
+        if item.pop("ytdlp_download_failed", False):
+            changed = True
+        merged.append(item)
+    if changed:
+        broadcast_state.set_playlist(merged)
+        _persist_playlist()
+        _emit_playlist()
+
+
+def _mark_ytdlp_download_failures(failed: list[dict[str, str]]) -> None:
+    failed_ids = {
+        str(row.get("id") or "").strip()
+        for row in failed
+        if str(row.get("id") or "").strip()
+    }
+    if not failed_ids:
+        return
+    for vid in failed_ids:
+        _mark_video_ytdlp_download_failed(vid)
+
+
+def _mark_video_ytdlp_download_failed(video_id: str) -> None:
+    vid = (video_id or "").strip()
+    if not vid:
+        return
+    pl = broadcast_state.get_playlist_dicts()
+    merged: list[dict[str, Any]] = []
+    changed = False
+    for row in pl:
+        item = dict(row)
+        if str(item.get("id") or "").strip() == vid:
+            if not item.get("ytdlp_download_failed"):
+                item["ytdlp_download_failed"] = True
+                changed = True
+        merged.append(item)
+    if changed:
+        broadcast_state.set_playlist(merged)
+        _persist_playlist()
+        _emit_playlist()
+
+
+def _playlist_item_row(item: Any) -> dict[str, Any]:
+    if item is None:
+        return {}
+    if hasattr(item, "to_dict"):
+        return item.to_dict()
+    return dict(item)
+
+
+def _is_track_unplayable(item: dict[str, Any] | Any | None) -> bool:
+    """다운로드가 실패로 표시된 곡만 자동 건너뜀."""
+    row = _playlist_item_row(item) if not isinstance(item, dict) else item
+    if not row or row.get("type") != "youtube":
+        return False
+    return bool(row.get("ytdlp_download_failed"))
+
+
+def _skip_to_next_track(reason: str = "") -> bool:
+    """재생 불가 곡 건너뛰기. False 면 방송 종료."""
+    item = broadcast_state.current_item()
+    title = (item.title if item else "") or "YouTube"
+    idx = broadcast_state.current_index
+    if reason:
+        get_logger().warning("skip track index=%s title=%s: %s", idx, title, reason)
+    else:
+        get_logger().warning("skip track index=%s title=%s", idx, title)
+    socketio.emit(
+        "track_skipped",
+        {
+            "message": reason or f"재생 불가 — {title}",
+            "index": idx,
+            "title": title,
+        },
+        namespace="/broadcast",
+    )
+    nxt = broadcast_state.advance_next()
+    _emit_now_playing()
+    _emit_playback_status()
+    _emit_playlist()
+    if nxt:
+        _advance_past_unplayable_tracks()
+        resync_broadcast_clients(allow_during_scan=True)
+        _notify_now_playing(nxt.title)
+        return True
+    _finalize_broadcast_ended()
+    return False
+
+
+def _hard_reset_for_broadcast_start() -> None:
+    """방송 시작마다 첫 방송과 같이 상태·창·준비 플래그 초기화."""
+    global _embed_scan_results, _embed_scan_broadcast_ready, _embed_scan_pending_payload
+
+    _cancel_broadcast_prep()
+    _close_broadcast_window_and_wait()
+    try:
+        from broadcast_window import close_external_youtube
+
+        close_external_youtube()
+    except Exception:
+        pass
+    broadcast_state.stop()
+    bump_stream_generation()
+    with _embed_scan_lock:
+        _embed_scan_results = []
+        _embed_scan_broadcast_ready = False
+        _embed_scan_pending_payload = None
+    _embed_scan_done.clear()
+    _embed_scan_client_ready.clear()
+    _clear_ytdlp_download_failed_flags()
+    try:
+        from youtube_download_cache import scan_and_repair_ytdlp_cache
+
+        scan_and_repair_ytdlp_cache()
+    except Exception as exc:
+        get_logger().warning("ytdlp cache scan failed: %s", exc)
+    try:
+        playback_recovery.dismiss_error()
+    except Exception:
+        pass
+    socketio.emit("broadcast_prep_reset", {})
+    socketio.emit("broadcast_prep_reset", namespace="/broadcast")
+    get_logger().info("broadcast start hard reset complete")
+
+
+def _restart_broadcast_window(
+    display_index: int,
+    *,
+    embed_scan: bool = False,
+    timeout: float = 40.0,
+) -> bool:
+    """종료 화면 등 이전 키오스크를 닫은 뒤 방송 창을 다시 연다."""
+    if not broadcast_command_queue:
+        return False
+    cfg = load_config()
+    port = int(cfg.get("port", WEBSITE_PORT))
+    done = threading.Event()
+    ok: list[bool] = [False]
+    broadcast_command_queue.put(
+        {
+            "action": "restart_broadcast",
+            "display_index": display_index,
+            "embed_scan": embed_scan,
+            "port": port,
+            "done": done,
+            "ok": ok,
+        }
+    )
+    if not done.wait(timeout=timeout):
+        get_logger().error("restart broadcast window timed out (%.0fs)", timeout)
+        return False
+    if not ok[0]:
+        get_logger().error("restart broadcast window failed display=%s", display_index)
+    return bool(ok[0])
+
+
+def _begin_broadcast_prep() -> int:
+    """새 방송 준비 세션 시작. 반환 토큰으로 취소 여부 판별."""
+    global _prep_token, _ytdlp_scan_running, _embed_scan_broadcast_ready
+    with _ytdlp_scan_lock:
+        _prep_token += 1
+        token = _prep_token
+        _ytdlp_scan_running = True
+        _embed_scan_broadcast_ready = False
+    _embed_scan_done.clear()
+    _embed_scan_client_ready.clear()
+    return token
+
+
+def _cancel_broadcast_prep() -> None:
+    """준비 스레드 중단·UI 잠금 해제 (방송 종료·재시작 시)."""
+    global _prep_token, _embed_scan_pending_payload
+    with _ytdlp_scan_lock:
+        _prep_token += 1
+        _embed_scan_pending_payload = None
+        _ytdlp_scan_running = False
+    _embed_scan_done.set()
+    _embed_scan_client_ready.clear()
+    try:
+        playback_recovery.dismiss_error()
+    except Exception:
+        pass
+    _emit_ytdlp_scan_progress(
+        0, 1, "", False, include_broadcast=True, phase=""
+    )
+    socketio.emit("broadcast_prep_reset", {})
+    socketio.emit("broadcast_prep_reset", namespace="/broadcast")
+
+
+def _finalize_broadcast_ended(*, close_window: bool = False) -> None:
+    """방송 종료 — 종료 화면 표시 (창은 방송 화면 ESC 두 번째에 닫음)."""
+    _cancel_broadcast_prep()
+    broadcast_state.stop()
+    bump_stream_generation()
+    _emit_now_playing()
+    _emit_playback_status()
+    socketio.emit("broadcast_ended", {}, namespace="/broadcast")
+    if close_window:
+        _close_broadcast_window()
 
 
 def _has_panel_client() -> bool:
@@ -212,8 +489,6 @@ def _emit_now_playing() -> None:
             "type": item.type if item else "",
         },
     )
-
-
 def _emit_playback_status() -> None:
     socketio.emit(
         "playback_status",
@@ -227,12 +502,15 @@ def _emit_playback_status() -> None:
 
 
 def _emit_broadcast_track() -> None:
-    """방송 키오스크 화면에 현재 트랙 반영 (자동 넘김 포함, 패널 연결과 무관)."""
-    resync_broadcast_clients()
+    """방송 키오스크 화면에 현재 트랙 반영 (다운로드 실패 곡은 자동 건너뜀)."""
+    _advance_past_unplayable_tracks()
+    resync_broadcast_clients(allow_during_scan=True)
 
 
 def _prefetch_playlist_streams(around_index: int | None = None) -> None:
-    """현재 곡·다음 곡 YouTube 스트림 URL 선로딩."""
+    """yt-dlp 필요 곡만 백그라운드 다운로드 (임베드 가능 곡 제외)."""
+    if youtube_stream_only():
+        return
     snap = broadcast_state.snapshot()
     pl = snap.get("playlist") or []
     cur = (
@@ -240,18 +518,149 @@ def _prefetch_playlist_streams(around_index: int | None = None) -> None:
         if around_index is not None
         else int(snap.get("current_index", -1))
     )
-    start = max(0, cur)
-    ids: list[str] = []
-    for i in range(start, min(start + 3, len(pl))):
-        row = pl[i]
-        if isinstance(row, dict) and row.get("type") == "youtube" and row.get("id"):
-            ids.append(str(row["id"]))
-    if ids:
-        schedule_youtube_prefetch(ids, _cache_youtube_stream)
+    schedule_ytdlp_downloads_for_playlist(
+        pl,
+        only_required=True,
+        from_index=max(0, cur),
+    )
 
 
-def resync_broadcast_clients() -> None:
+def _prefetch_all_ytdlp_in_playlist() -> None:
+    schedule_ytdlp_downloads_for_playlist(
+        broadcast_state.get_playlist_dicts(),
+        only_required=True,
+        from_index=0,
+    )
+
+
+def _emit_mux_playback(
+    video_id: str,
+    *,
+    title: str,
+    duration: float,
+    index: int,
+) -> None:
+    """스트림 재생 (/api/youtube/stream) — 캐시는 prefetch가 담당."""
+    socketio.emit(
+        "youtube_stream_playback",
+        {
+            "url": f"/api/youtube/stream/{video_id}",
+            "video_id": video_id,
+            "title": title,
+            "duration": max(0.0, duration),
+            "index": index,
+            "local": False,
+            "mux": False,
+        },
+        namespace="/broadcast",
+    )
+
+
+def _emit_ytdlp_local_playback(
+    video_id: str,
+    *,
+    title: str,
+    duration: float,
+    index: int,
+) -> None:
+    """yt-dlp 로컬 파일 재생 (stream 모드만 실시간 스트림 폴백)."""
+    if youtube_stream_only():
+        _emit_mux_playback(
+            video_id,
+            title=title,
+            duration=duration,
+            index=index,
+        )
+        return
+    entry = get_download_entry(video_id)
+    if not entry:
+        item = broadcast_state.current_item()
+        if _is_track_unplayable(item):
+            _skip_to_next_track(f"다운로드 실패 — {title}")
+            return
+        if item and item.ytdlp_required:
+            _mark_video_ytdlp_download_failed(video_id)
+            _skip_to_next_track(f"다운로드 실패 — {title}")
+            return
+        _emit_mux_playback(
+            video_id,
+            title=title,
+            duration=duration,
+            index=index,
+        )
+        return
+    dur = float(entry.get("duration") or duration or 0)
+    socketio.emit(
+        "youtube_stream_playback",
+        {
+            "url": entry.get("url") or local_playback_url(video_id),
+            "video_id": video_id,
+            "title": title,
+            "duration": dur,
+            "index": index,
+            "local": True,
+        },
+        namespace="/broadcast",
+    )
+
+
+def _emit_ytdlp_playback_if_ready(index: int) -> None:
+    """yt-dlp 필요 곡만 로컬/스트림 재생 (임베드 곡은 playCurrent → iframe)."""
+    if index != broadcast_state.current_index:
+        return
+    item = broadcast_state.current_item()
+    if not item or item.type != "youtube" or not item.ytdlp_required:
+        return
+    video_id = str(item.id or "").strip()
+    if not video_id:
+        return
+    dur = float(item.duration or 0)
+    if _is_track_unplayable(item):
+        _skip_to_next_track(f"다운로드 실패 — {item.title or 'YouTube'}")
+        return
+    if youtube_stream_only():
+        _emit_mux_playback(
+            video_id,
+            title=item.title or "YouTube",
+            duration=dur,
+            index=index,
+        )
+        return
+    if not is_download_ready(video_id):
+        _play_ytdlp_at_index(
+            video_id,
+            index,
+            title=item.title or "YouTube",
+            mark_required=False,
+        )
+        return
+    _emit_ytdlp_local_playback(
+        video_id,
+        title=item.title or "YouTube",
+        duration=dur,
+        index=index,
+    )
+
+
+def _advance_past_unplayable_tracks() -> None:
+    pl = broadcast_state.get_playlist_dicts()
+    for _ in range(len(pl) + 1):
+        item = broadcast_state.current_item()
+        if not item:
+            return
+        if not _is_track_unplayable(item):
+            return
+        row = _playlist_item_row(item)
+        title = row.get("title") or "YouTube"
+        if not _skip_to_next_track(f"다운로드 실패 — {title}"):
+            return
+
+
+def resync_broadcast_clients(*, allow_during_scan: bool = False) -> None:
     """방송 브라우저에 현재 재생 상태를 다시 보냄 (창이 늦게 열릴 때 유실 방지)."""
+    if _ytdlp_scan_running and not allow_during_scan:
+        return
+    _advance_past_unplayable_tracks()
     snap = broadcast_state.snapshot()
     idx = int(snap.get("current_index", -1))
     status = snap.get("playback_status", "stopped")
@@ -261,6 +670,36 @@ def resync_broadcast_clients() -> None:
     socketio.emit("playback_status", {"status": status}, namespace="/broadcast")
     if idx >= 0 and status in ("playing", "paused"):
         _prefetch_playlist_streams(idx)
+        _emit_ytdlp_playback_if_ready(idx)
+
+
+def _cache_youtube_progressive(video_id: str) -> dict[str, Any]:
+    with _yt_stream_cache_lock:
+        cached = _yt_progressive_cache.get(video_id)
+        if cached and cached.get("expires", 0) > time.time():
+            return cached
+    info = fetch_youtube_progressive_stream(video_id)
+    entry = {**info, "expires": time.time() + 7200}
+    with _yt_stream_cache_lock:
+        _yt_progressive_cache[video_id] = entry
+    return entry
+
+
+def _cache_youtube_dash(video_id: str) -> dict[str, Any]:
+    with _yt_stream_cache_lock:
+        cached = _yt_dash_cache.get(video_id)
+        if cached and cached.get("expires", 0) > time.time():
+            return cached
+    from youtube_dash_mux import extract_dash_av_urls
+
+    info = extract_dash_av_urls(
+        video_id,
+        min_video_height=YT_MIN_DOWNLOAD_HEIGHT,
+    )
+    entry = {**info, "expires": time.time() + 7200}
+    with _yt_stream_cache_lock:
+        _yt_dash_cache[video_id] = entry
+    return entry
 
 
 def _cache_youtube_stream(video_id: str) -> dict[str, Any]:
@@ -268,19 +707,66 @@ def _cache_youtube_stream(video_id: str) -> dict[str, Any]:
         cached = _yt_stream_cache.get(video_id)
         if cached and cached.get("expires", 0) > time.time():
             return cached
-    info = fetch_youtube_stream_info(video_id)
+    info = fetch_youtube_stream_info(video_id, min_height=0)
     entry = {**info, "expires": time.time() + 7200}
     with _yt_stream_cache_lock:
         _yt_stream_cache[video_id] = entry
     return entry
 
 
-def notify_youtube_stream_failed(finished_index: int, message: str = "") -> None:
+def _try_emit_hd_stream_playback(
+    video_id: str,
+    index: int,
+    *,
+    title: str = "",
+    min_height: int = YT_MIN_DOWNLOAD_HEIGHT,
+) -> bool:
+    """로컬 파일 없을 때 DASH 실시간 mux 재생."""
+    if not load_config().get("youtube_allow_stream_fallback", True):
+        return False
+    try:
+        dur = _fetch_youtube_duration(video_id)
+        _emit_mux_playback(
+            video_id,
+            title=title,
+            duration=dur,
+            index=index,
+        )
+        get_logger().info("ytdlp → mux stream id=%s index=%s", video_id, index)
+        return True
+    except Exception as exc:
+        get_logger().warning(
+            "ytdlp mux fallback failed id=%s: %s", video_id, exc
+        )
+        return False
+
+
+def notify_youtube_stream_failed(
+    finished_index: int,
+    message: str = "",
+    *,
+    title: str = "",
+) -> None:
+    try:
+        finished_index = int(finished_index)
+    except (TypeError, ValueError):
+        finished_index = broadcast_state.current_index
+    if (
+        finished_index >= 0
+        and finished_index != broadcast_state.current_index
+    ):
+        return
     socketio.emit(
         "youtube_stream_failed",
-        {"message": message, "index": finished_index},
+        {
+            "message": message,
+            "index": finished_index,
+            "title": title,
+        },
         namespace="/broadcast",
     )
+    reason = message or f"재생 실패 — {title or 'YouTube'}"
+    _skip_to_next_track(reason)
 
 
 def notify_youtube_browser_fallback_started(
@@ -319,10 +805,7 @@ def finish_external_youtube_playback(finished_index: int | None = None) -> None:
         _emit_broadcast_track()
         _notify_now_playing(item.title)
     else:
-        broadcast_state.stop()
-        _emit_now_playing()
-        _emit_playback_status()
-        socketio.emit("broadcast_ended", {}, namespace="/broadcast")
+        _finalize_broadcast_ended()
 
 
 def _notify_broadcast(title: str, event: str) -> None:
@@ -345,6 +828,444 @@ def _fetch_youtube_duration(video_id: str) -> float:
         return float(fetch_youtube_video_meta(video_id).get("duration") or 0)
     except Exception:
         return 0.0
+
+
+def _emit_ytdlp_scan_progress(
+    done: int,
+    total: int,
+    status: str,
+    running: bool,
+    *,
+    include_broadcast: bool = False,
+    phase: str = "",
+    percent: int | None = None,
+) -> None:
+    if percent is None:
+        pct = int((done * 100) / total) if total > 0 else (0 if running else 100)
+    else:
+        pct = int(percent)
+    payload = {
+        "done": done,
+        "total": total,
+        "percent": max(0, min(100, pct)),
+        "status": status,
+        "running": running,
+        "phase": phase,
+    }
+    socketio.emit("ytdlp_scan_progress", payload)
+    if include_broadcast:
+        socketio.emit("ytdlp_scan_progress", payload, namespace="/broadcast")
+
+
+def _mark_playlist_ytdlp_required(video_id: str, reason: str = "embed_blocked_runtime") -> None:
+    """방송 중 실제 yt-dlp 폴백이 발생한 영상에 배지를 반영."""
+    if not video_id:
+        return
+    pl = broadcast_state.get_playlist_dicts()
+    changed = False
+    for item in pl:
+        if item.get("type") == "youtube" and str(item.get("id") or "").strip() == video_id:
+            item["ytdlp_required"] = True
+            item["ytdlp_checked"] = True
+            item["ytdlp_reason"] = reason
+            changed = True
+    if changed:
+        broadcast_state.set_playlist(pl)
+        _persist_playlist()
+        _emit_playlist()
+
+
+def _scan_one_youtube_item(item: dict[str, Any]) -> dict[str, Any]:
+    video_id = str(item.get("id") or "").strip()
+    if not video_id:
+        return {"checked": False, "required": False, "reason": "missing_id"}
+    try:
+        inspect_info = inspect_youtube_playback_mode(video_id)
+        return {
+            "checked": True,
+            "required": bool(inspect_info.get("requires_ytdlp")),
+            "reason": str(inspect_info.get("reason") or ""),
+            "ytdlp_probe_ok": not bool(inspect_info.get("requires_ytdlp")),
+        }
+    except Exception as exc:
+        return {
+            "checked": False,
+            "required": False,
+            "reason": f"scan_error:{exc}",
+            "ytdlp_probe_ok": False,
+        }
+
+
+def _scan_playlist_for_ytdlp_required(
+    *,
+    phase: str,
+    include_broadcast: bool = False,
+) -> int:
+    """퍼가기(iframe) 불가 곡만 ytdlp_required 로 표시."""
+    original = broadcast_state.get_playlist_dicts()
+    youtube_jobs = [
+        dict(row) for row in original if row.get("type") == "youtube"
+    ]
+    total = len(youtube_jobs)
+    verdict_by_video_id: dict[str, dict[str, Any]] = {}
+
+    _emit_ytdlp_scan_progress(
+        0,
+        max(total, 1),
+        f"{phase} · 임베드 재생 검사 0/{total}곡",
+        True,
+        include_broadcast=include_broadcast,
+        phase=phase,
+    )
+
+    if youtube_jobs:
+        max_workers = max(1, min(YTDLP_SCAN_MAX_WORKERS, len(youtube_jobs)))
+        done = 0
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_map = {
+                pool.submit(_scan_one_youtube_item, item): str(item.get("id") or "").strip()
+                for item in youtube_jobs
+            }
+            for future in as_completed(future_map):
+                video_id = future_map[future]
+                verdict = future.result()
+                if video_id:
+                    verdict_by_video_id[video_id] = verdict
+                done += 1
+                _emit_ytdlp_scan_progress(
+                    done,
+                    total,
+                    f"{phase} · 검사 중 ({done}/{total})",
+                    True,
+                    include_broadcast=include_broadcast,
+                    phase=phase,
+                )
+
+    latest = broadcast_state.get_playlist_dicts()
+    merged: list[dict[str, Any]] = []
+    required_count = 0
+    for row in latest:
+        item = dict(row)
+        if item.get("type") != "youtube":
+            item["ytdlp_checked"] = True
+            item["ytdlp_required"] = False
+            item["ytdlp_reason"] = "local"
+        else:
+            video_id = str(item.get("id") or "").strip()
+            verdict = verdict_by_video_id.get(video_id)
+            if verdict:
+                item["ytdlp_checked"] = bool(verdict.get("checked"))
+                item["ytdlp_required"] = bool(verdict.get("required"))
+                item["ytdlp_reason"] = str(verdict.get("reason") or "")
+                item["ytdlp_probe_ok"] = bool(verdict.get("ytdlp_probe_ok"))
+            else:
+                item["ytdlp_checked"] = False
+                item["ytdlp_required"] = False
+                item["ytdlp_reason"] = "pending_scan"
+            if item["ytdlp_required"]:
+                required_count += 1
+        merged.append(item)
+
+    broadcast_state.set_playlist(merged)
+    _persist_playlist()
+    _emit_playlist()
+    return required_count
+
+
+def _download_ytdlp_required_in_playlist(
+    *,
+    phase: str,
+    include_broadcast: bool = False,
+    prep_token: int | None = None,
+) -> dict[str, Any]:
+    """yt-dlp 필요 곡 — 방송 시작 전 고화질 다운로드."""
+    if youtube_stream_only():
+        ids = youtube_ids_from_playlist(
+            broadcast_state.get_playlist_dicts(),
+            only_required=True,
+        )
+        n = len(ids)
+        _emit_ytdlp_scan_progress(
+            1,
+            1,
+            f"{phase} · 스트리밍 재생 준비 완료 ({n}곡, 파일 저장 없음)",
+            False,
+            include_broadcast=include_broadcast,
+            phase=phase,
+        )
+        return {"ok": ids, "failed": [], "total": n, "skipped": n}
+    if prep_token is not None and not _prep_alive(prep_token):
+        raise BroadcastPrepAborted()
+    ids = youtube_ids_from_playlist(
+        broadcast_state.get_playlist_dicts(),
+        only_required=True,
+    )
+    total = len(ids)
+
+    download_phase = "방송준비중"
+
+    def on_progress(done: int, total_n: int, status: str, _vid: str | None) -> None:
+        if prep_token is not None and not _prep_alive(prep_token):
+            raise BroadcastPrepAborted()
+        _emit_ytdlp_scan_progress(
+            done,
+            total_n,
+            status,
+            True,
+            include_broadcast=include_broadcast,
+            phase=download_phase,
+        )
+
+    if total == 0:
+        _emit_ytdlp_scan_progress(
+            1,
+            1,
+            f"{phase} · yt-dlp 필요 곡 없음 (전부 퍼가기 재생)",
+            False,
+            include_broadcast=include_broadcast,
+            phase=phase,
+        )
+        return {
+            "ok": [],
+            "failed": [],
+            "total": 0,
+            "youtube_total": 0,
+            "ytdlp_required": 0,
+            "scan_failed": 0,
+        }
+
+    if prep_token is not None and not _prep_alive(prep_token):
+        raise BroadcastPrepAborted()
+
+    ready_n = sum(1 for vid in ids if is_download_ready(vid))
+    if ready_n >= total:
+        _emit_ytdlp_scan_progress(
+            total,
+            max(total, 1),
+            f"저장된 고화질 영상 {total}곡 사용 (재다운로드 없음)",
+            False,
+            include_broadcast=include_broadcast,
+            phase="방송준비중",
+        )
+        return {
+            "ok": list(ids),
+            "failed": [],
+            "total": total,
+            "skipped": total,
+            "youtube_total": total,
+            "ytdlp_required": total,
+            "scan_failed": 0,
+        }
+
+    _emit_ytdlp_scan_progress(
+        0,
+        total,
+        f"yt-dlp 다운로드 0/{total}곡"
+        + (f" (이미 {ready_n}곡)" if ready_n else ""),
+        True,
+        include_broadcast=include_broadcast,
+        phase="방송준비중",
+    )
+    result = download_youtube_videos_sync(ids, on_progress=on_progress)
+    if prep_token is not None and not _prep_alive(prep_token):
+        raise BroadcastPrepAborted()
+    failed = result.get("failed") or []
+    ok_n = len(result.get("ok") or [])
+    if failed:
+        _mark_ytdlp_download_failures(failed)
+        msg = f"완료 · yt-dlp {ok_n}곡 / 실패 {len(failed)}곡 (실패 곡은 방송 중 건너뜀)"
+    else:
+        msg = f"yt-dlp 다운로드 완료 · {ok_n}곡"
+    _emit_ytdlp_scan_progress(
+        total,
+        max(total, 1),
+        msg,
+        False,
+        include_broadcast=include_broadcast,
+        phase="방송준비중",
+    )
+    return {
+        **result,
+        "youtube_total": total,
+        "ytdlp_required": ok_n,
+        "scan_failed": len(failed),
+    }
+
+
+def _apply_embed_scan_results(results: list[dict[str, Any]]) -> int:
+    """방송 화면 임베드 검사 결과를 플레이리스트에 반영."""
+    by_id: dict[str, dict[str, Any]] = {}
+    for row in results:
+        vid = str(row.get("id") or "").strip()
+        if vid:
+            by_id[vid] = row
+    pl = broadcast_state.get_playlist_dicts()
+    required_count = 0
+    merged: list[dict[str, Any]] = []
+    for row in pl:
+        item = dict(row)
+        if item.get("type") != "youtube":
+            item["ytdlp_checked"] = True
+            item["ytdlp_required"] = False
+            item["ytdlp_reason"] = "local"
+        else:
+            video_id = str(item.get("id") or "").strip()
+            verdict = by_id.get(video_id)
+            if verdict:
+                item["ytdlp_checked"] = True
+                item["ytdlp_required"] = bool(verdict.get("required"))
+                item["ytdlp_reason"] = str(verdict.get("reason") or "")
+            else:
+                item["ytdlp_checked"] = True
+                item["ytdlp_required"] = False
+                item["ytdlp_reason"] = "no_probe"
+            if item["ytdlp_required"]:
+                required_count += 1
+        merged.append(item)
+    broadcast_state.set_playlist(merged)
+    _persist_playlist()
+    _emit_playlist()
+    return required_count
+
+
+def _prepare_broadcast_youtube(display_index: int, prep_token: int) -> None:
+    """방송 시작 전: 방송 화면에서 임베드 검사 → yt-dlp 필요 곡 다운로드."""
+    global _embed_scan_broadcast_ready, _embed_scan_results, _embed_scan_pending_payload
+
+    def _abort_if_cancelled() -> None:
+        if not _prep_alive(prep_token):
+            raise BroadcastPrepAborted()
+
+    phase = "방송 시작 전"
+    youtube_jobs = [
+        {"id": str(row.get("id") or "").strip(), "title": str(row.get("title") or "")}
+        for row in broadcast_state.get_playlist_dicts()
+        if row.get("type") == "youtube" and str(row.get("id") or "").strip()
+    ]
+    total = len(youtube_jobs)
+    scan_payload = {
+        "videos": youtube_jobs,
+        "probe_seconds": EMBED_PROBE_SECONDS,
+    }
+
+    _embed_scan_done.clear()
+    _embed_scan_results = []
+    _embed_scan_client_ready.clear()
+    with _embed_scan_lock:
+        _embed_scan_broadcast_ready = False
+        _embed_scan_pending_payload = scan_payload
+
+    _abort_if_cancelled()
+    enqueue_panel_window_command("minimize")
+    from youtube_util import refresh_youtube_cookies_file, resolve_youtube_cookiefile
+
+    _emit_ytdlp_scan_progress(
+        0,
+        max(total, 1),
+        "YouTube 쿠키 확인 중…",
+        True,
+        include_broadcast=True,
+        phase=phase,
+    )
+    if not resolve_youtube_cookiefile():
+        if refresh_youtube_cookies_file(close_browsers=True):
+            _emit_ytdlp_scan_progress(
+                0,
+                max(total, 1),
+                "YouTube 쿠키 저장 완료",
+                True,
+                include_broadcast=True,
+                phase=phase,
+            )
+        else:
+            get_logger().warning(
+                "youtube cookies not available — use manual cookies.txt (see panel settings)"
+            )
+            _emit_ytdlp_scan_progress(
+                0,
+                max(total, 1),
+                "YouTube 쿠키 없음 — 설정에서 «쿠키 안내» 참고 (다운로드 실패 가능)",
+                True,
+                include_broadcast=True,
+                phase=phase,
+            )
+    _abort_if_cancelled()
+    _emit_ytdlp_scan_progress(
+        0,
+        max(total, 1),
+        "방송 화면에서 임베드 재생 검사 준비…",
+        True,
+        include_broadcast=True,
+        phase=phase,
+    )
+
+    if not _restart_broadcast_window(display_index, embed_scan=True):
+        raise RuntimeError(
+            "방송 창을 열 수 없습니다. Edge 또는 Chrome이 설치되어 있는지 확인해 주세요."
+        )
+    _abort_if_cancelled()
+
+    for _ in range(160):
+        _abort_if_cancelled()
+        if _embed_scan_broadcast_ready:
+            break
+        time.sleep(0.25)
+    else:
+        get_logger().warning(
+            "broadcast not ready for embed scan; using metadata fallback"
+        )
+        with _embed_scan_lock:
+            _embed_scan_pending_payload = None
+        _scan_playlist_for_ytdlp_required(phase=phase, include_broadcast=True)
+        _download_ytdlp_required_in_playlist(
+            phase=phase,
+            include_broadcast=True,
+            prep_token=prep_token,
+        )
+        return
+
+    _abort_if_cancelled()
+    if not _embed_scan_client_ready.wait(timeout=15.0):
+        get_logger().warning("embed scan client_ready timeout; pushing scan start")
+        socketio.emit("embed_scan_start", scan_payload, namespace="/broadcast")
+    timeout = max(180.0, total * 20.0)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        _abort_if_cancelled()
+        if _embed_scan_done.wait(timeout=0.5):
+            break
+    else:
+        get_logger().error("embed scan timed out after %.0fs", timeout)
+        raise TimeoutError("임베드 재생 검사 시간 초과")
+
+    _abort_if_cancelled()
+    _apply_embed_scan_results(_embed_scan_results)
+    with _embed_scan_lock:
+        _embed_scan_pending_payload = None
+    _abort_if_cancelled()
+    _emit_ytdlp_scan_progress(
+        0,
+        1,
+        "고화질 영상 다운로드 시작…",
+        True,
+        include_broadcast=True,
+        phase="방송준비중",
+    )
+    _download_ytdlp_required_in_playlist(
+        phase=phase,
+        include_broadcast=True,
+        prep_token=prep_token,
+    )
+    _abort_if_cancelled()
+    _emit_ytdlp_scan_progress(
+        1,
+        1,
+        "준비 완료 · 방송 시작",
+        True,
+        include_broadcast=True,
+        phase="방송준비중",
+    )
+    socketio.emit("embed_scan_done", {}, namespace="/broadcast")
 
 
 def auto_setup_admin() -> None:
@@ -440,6 +1361,44 @@ def broadcast_page():
 
 
 @csrf.exempt
+@app.route("/api/youtube/local/<video_id>")
+def api_youtube_local_file(video_id: str):
+    """방송 화면 <video>용 — 미리 받아 둔 yt-dlp 로컬 파일."""
+    if not _is_local_request():
+        return jsonify({"error": "forbidden"}), 403
+    from flask import send_file
+
+    vid = parse_youtube_video_id(video_id) or (video_id or "").strip()
+    if not vid:
+        return jsonify({"error": "invalid video id"}), 400
+    if youtube_stream_only():
+        return redirect(f"/api/youtube/stream/{vid}")
+    entry = get_download_entry(vid)
+    if not entry:
+        try:
+            entry = ensure_youtube_downloaded(vid)
+        except Exception as exc:
+            get_logger().error("youtube local file missing id=%s: %s", vid, exc)
+            return jsonify({"error": str(exc)}), 404
+    path = entry.get("path")
+    if not path or not Path(path).is_file():
+        return jsonify({"error": "not found"}), 404
+    ext = Path(path).suffix.lower()
+    mime = {
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".mkv": "video/x-matroska",
+        ".m4v": "video/x-m4v",
+    }.get(ext, "video/mp4")
+    return send_file(
+        path,
+        mimetype=mime,
+        conditional=True,
+        download_name=f"{vid}{ext or '.mp4'}",
+    )
+
+
+@csrf.exempt
 @app.route("/api/youtube/stream/<video_id>")
 def api_youtube_stream_proxy(video_id: str):
     """방송 화면 <video>용 YouTube 스트림 프록시 (Range 지원)."""
@@ -448,11 +1407,67 @@ def api_youtube_stream_proxy(video_id: str):
     vid = parse_youtube_video_id(video_id) or (video_id or "").strip()
     if not vid:
         return jsonify({"error": "invalid video id"}), 400
+    meta: dict[str, Any] | None = None
     try:
-        meta = _cache_youtube_stream(vid)
-    except Exception as exc:
-        get_logger().error("youtube stream resolve failed id=%s: %s", vid, exc)
-        return jsonify({"error": str(exc)}), 404
+        meta = _cache_youtube_progressive(vid)
+        height = int(meta.get("height") or 0)
+        if height >= YT_MIN_DOWNLOAD_HEIGHT:
+            get_logger().info(
+                "youtube progressive stream id=%s height=%sp",
+                vid,
+                height,
+            )
+        else:
+            raise ValueError(f"progressive {height}p < {YT_MIN_DOWNLOAD_HEIGHT}p")
+    except Exception as prog_exc:
+        get_logger().warning(
+            "youtube progressive failed id=%s: %s — trying fast mux",
+            vid,
+            prog_exc,
+        )
+        try:
+            from youtube_dash_mux import iter_ffmpeg_mux_stream
+
+            dash = _cache_youtube_dash(vid)
+            get_logger().info(
+                "youtube copy-mux stream id=%s height=%sp",
+                vid,
+                dash.get("height"),
+            )
+
+            def generate_mux():
+                from youtube_dash_mux import iter_ffmpeg_mux_stream_browser
+
+                try:
+                    yield from iter_ffmpeg_mux_stream(
+                        dash["video_url"],
+                        dash["audio_url"],
+                        dash.get("http_headers"),
+                    )
+                except Exception as mux_exc:
+                    get_logger().warning(
+                        "copy mux failed id=%s, transcode fallback: %s",
+                        vid,
+                        mux_exc,
+                    )
+                    yield from iter_ffmpeg_mux_stream_browser(
+                        dash["video_url"],
+                        dash["audio_url"],
+                        dash.get("http_headers"),
+                    )
+
+            return Response(
+                generate_mux(),
+                mimetype="video/mp4",
+                headers={"Cache-Control": "no-store"},
+            )
+        except Exception as mux_meta_exc:
+            get_logger().error(
+                "youtube stream resolve failed id=%s: %s",
+                vid,
+                mux_meta_exc,
+            )
+            return jsonify({"error": str(mux_meta_exc)}), 404
 
     upstream_url = meta["url"]
     headers = dict(meta.get("http_headers") or {})
@@ -492,6 +1507,49 @@ def api_youtube_stream_proxy(video_id: str):
         response.headers["Content-Range"] = content_range
     response.headers["Accept-Ranges"] = "bytes"
     return response
+
+
+@csrf.exempt
+@app.route("/api/youtube/mux/<video_id>")
+def api_youtube_mux_stream(video_id: str):
+    """DASH video+audio — ffmpeg 실시간 mux → <video> (파일 저장 없음)."""
+    if not _is_local_request():
+        return jsonify({"error": "forbidden"}), 403
+    from youtube_dash_mux import extract_dash_av_urls, iter_ffmpeg_mux_stream
+
+    vid = parse_youtube_video_id(video_id) or (video_id or "").strip()
+    if not vid:
+        return jsonify({"error": "invalid video id"}), 400
+    try:
+        meta = extract_dash_av_urls(vid)
+    except Exception as exc:
+        get_logger().error("youtube mux meta failed id=%s: %s", vid, exc)
+        return jsonify({"error": str(exc)}), 404
+
+    def generate():
+        try:
+            yield from iter_ffmpeg_mux_stream(
+                meta["video_url"],
+                meta["audio_url"],
+                meta.get("http_headers"),
+            )
+        except Exception as exc:
+            get_logger().error("youtube mux stream id=%s: %s", vid, exc)
+
+    get_logger().info(
+        "youtube mux play id=%s height=%sp audio=%sk",
+        vid,
+        meta.get("height"),
+        meta.get("audio_abr"),
+    )
+    return Response(
+        generate(),
+        mimetype="video/mp4",
+        headers={
+            "Cache-Control": "no-store",
+            "Accept-Ranges": "none",
+        },
+    )
 
 
 @app.route("/api/csrf-token")
@@ -541,12 +1599,15 @@ def api_session_status():
 
 @app.route("/api/config/public")
 def api_public_config():
+    from youtube_util import resolve_youtube_cookiefile
+
     cfg = load_config()
     port = int(cfg.get("port", 8765))
     urls = network_access_urls(port, WEBSITE_PORT)
     return jsonify(
         {
             "port": port,
+            "youtube_cookies_ok": resolve_youtube_cookiefile(cfg) is not None,
             "end_broadcast_image": cfg.get("end_broadcast_image", ""),
             "next_alert_logo": resolve_alert_logo_url(cfg.get("next_alert_logo")),
             "next_alert_text": normalize_next_alert_text(cfg.get("next_alert_text")),
@@ -1126,6 +2187,39 @@ def local_apply():
 
 
 @csrf.exempt
+@app.route("/api/youtube/cookies/status")
+def api_youtube_cookies_status():
+    if not current_user.is_authenticated:
+        return jsonify({"error": "login required"}), 401
+    from youtube_util import youtube_cookie_setup_guide, youtube_cookies_status
+
+    status = youtube_cookies_status()
+    status["guide"] = youtube_cookie_setup_guide()
+    return jsonify(status)
+
+
+@csrf.exempt
+@app.route("/api/youtube/cookies/refresh", methods=["POST"])
+def api_youtube_cookies_refresh():
+    if not current_user.is_authenticated:
+        return jsonify({"error": "login required"}), 401
+    from youtube_util import (
+        import_youtube_cookies_file,
+        refresh_youtube_cookies_file,
+        youtube_cookies_status,
+    )
+
+    data = request.get_json(force=True, silent=True) or {}
+    close_browsers = bool(data.get("close_browsers", True))
+    import_path = str(data.get("path") or "").strip()
+    if import_path:
+        import_youtube_cookies_file(import_path)
+    ok = refresh_youtube_cookies_file(close_browsers=close_browsers)
+    status = youtube_cookies_status()
+    return jsonify({"ok": ok and status.get("ok"), **status})
+
+
+@csrf.exempt
 @app.route("/api/cf/status")
 def cf_status():
     cfg = load_config()
@@ -1276,14 +2370,17 @@ def on_panel_disconnect():
 def on_broadcast_connect():
     snap = broadcast_state.snapshot()
     get_logger().info(
-        "broadcast client connected sid=%s index=%s status=%s",
+        "broadcast client connected sid=%s index=%s status=%s scan=%s",
         request.sid,
         snap.get("current_index"),
         snap.get("playback_status"),
+        _ytdlp_scan_running,
     )
-    emit("state_sync", snap)
     cfg = load_config()
     emit("config", broadcast_ui_config(cfg))
+    if _ytdlp_scan_running:
+        return
+    emit("state_sync", snap)
     idx = int(snap.get("current_index", -1))
     status = snap.get("playback_status", "stopped")
     if idx >= 0 and status in ("playing", "paused"):
@@ -1291,6 +2388,7 @@ def on_broadcast_connect():
         emit("load_track", snap)
         emit("playback_status", {"status": status})
         _prefetch_playlist_streams(idx)
+        _emit_ytdlp_playback_if_ready(idx)
 
 
 def _require_auth_event(fn: Callable) -> Callable:
@@ -1386,15 +2484,75 @@ def on_control(data):
         return _deny_broadcast_control("앱에 로그인되어 있어야 방송을 제어할 수 있습니다.")
 
     if action == "start":
-        item = broadcast_state.start_playback()
-        if item and broadcast_command_queue:
-            broadcast_command_queue.put(
-                {"action": "open_broadcast", "display_index": display_index}
-            )
-        _emit_now_playing()
-        _emit_playback_status()
-        _emit_playlist()
-        _emit_broadcast_track()
+        if not broadcast_state.get_playlist_dicts():
+            return _deny_broadcast_control("플레이리스트에 곡을 추가해 주세요.")
+        _hard_reset_for_broadcast_start()
+
+        def start_after_prep() -> None:
+            global _embed_scan_pending_payload
+            prep_token = _begin_broadcast_prep()
+            try:
+                _prepare_broadcast_youtube(display_index, prep_token)
+                if not _prep_alive(prep_token):
+                    return
+                with _ytdlp_scan_lock:
+                    _ytdlp_scan_running = False
+                    _embed_scan_pending_payload = None
+                    _embed_scan_broadcast_ready = False
+                item = broadcast_state.start_playback()
+                if not item:
+                    _emit_ytdlp_scan_progress(
+                        0,
+                        1,
+                        "재생할 곡이 없습니다.",
+                        False,
+                        phase="",
+                    )
+                    return
+                _emit_now_playing()
+                _emit_playback_status()
+                _emit_playlist()
+                socketio.emit("broadcast_playback_start", {}, namespace="/broadcast")
+                _advance_past_unplayable_tracks()
+                _emit_broadcast_track()
+
+                def _delayed_broadcast_resync() -> None:
+                    for delay in (0.9, 2.2):
+                        time.sleep(delay)
+                        if broadcast_state.playback_status not in ("playing", "paused"):
+                            return
+                        resync_broadcast_clients(allow_during_scan=True)
+
+                threading.Thread(
+                    target=_delayed_broadcast_resync, daemon=True
+                ).start()
+                _emit_ytdlp_scan_progress(
+                    1,
+                    1,
+                    "방송을 시작합니다.",
+                    False,
+                    include_broadcast=True,
+                    phase="",
+                )
+            except BroadcastPrepAborted:
+                get_logger().info("broadcast prep aborted (token=%s)", prep_token)
+            except Exception as exc:
+                get_logger().error("broadcast start prep failed: %s", exc, exc_info=True)
+                _emit_ytdlp_scan_progress(
+                    0,
+                    1,
+                    f"준비 실패 — {exc}",
+                    False,
+                    include_broadcast=True,
+                    phase="방송 시작 전",
+                )
+            finally:
+                with _ytdlp_scan_lock:
+                    _ytdlp_scan_running = False
+                    _embed_scan_pending_payload = None
+
+        threading.Thread(target=start_after_prep, daemon=True).start()
+        return
     elif action == "play":
         if broadcast_state.current_index < 0:
             broadcast_state.start_playback()
@@ -1413,7 +2571,7 @@ def on_control(data):
             _emit_broadcast_track()
             _notify_now_playing(item.title)
         else:
-            socketio.emit("broadcast_ended", {}, namespace="/broadcast")
+            _finalize_broadcast_ended()
     elif action == "prev":
         item = broadcast_state.advance_previous()
         _emit_now_playing()
@@ -1422,24 +2580,184 @@ def on_control(data):
             _emit_broadcast_track()
             _notify_now_playing(item.title)
     elif action == "stop":
-        broadcast_state.stop()
-        _emit_now_playing()
-        _emit_playback_status()
-        socketio.emit("broadcast_ended", {}, namespace="/broadcast")
+        _finalize_broadcast_ended()
 
 
 @socketio.on("request_stop", namespace="/broadcast")
 def on_request_stop(_data=None):
-    """방송 화면 ESC — 종료 화면 표시 (창은 ESC로 닫기)."""
-    broadcast_state.stop()
-    _emit_now_playing()
-    _emit_playback_status()
-    socketio.emit("broadcast_ended", {}, namespace="/broadcast")
+    """방송 화면 ESC — 종료 화면 표시 (창은 두 번째 ESC로 닫기)."""
+    _finalize_broadcast_ended(close_window=False)
+
+
+@socketio.on("request_close_broadcast", namespace="/broadcast")
+def on_request_close_broadcast(_data=None):
+    """방송 종료 화면에서 두 번째 ESC — 키오스크 창 닫기."""
+    _close_broadcast_window()
+
+
+def _emit_ytdlp_download_error(
+    message: str,
+    *,
+    video_id: str,
+    title: str,
+    index: int,
+) -> None:
+    payload = {
+        "message": message,
+        "video_id": video_id,
+        "title": title or "YouTube",
+        "index": index,
+    }
+    socketio.emit("ytdlp_download_error", payload, namespace="/broadcast")
+    socketio.emit("ytdlp_download_error", payload)
+
+
+def _play_ytdlp_at_index(
+    video_id: str,
+    index: int,
+    *,
+    title: str = "",
+    reason: str = "",
+    mark_required: bool = True,
+) -> None:
+    """yt-dlp 곡 재생 — stream 모드는 DASH mux만 (다운로드 없음)."""
+    video_id = (video_id or "").strip()
+    if not video_id:
+        return
+    if index < 0 or index != broadcast_state.current_index:
+        get_logger().info(
+            "ytdlp playback ignored stale index=%s current=%s id=%s",
+            index,
+            broadcast_state.current_index,
+            video_id,
+        )
+        return
+    if broadcast_state.playback_status not in ("playing", "paused"):
+        return
+    if mark_required and reason:
+        _mark_playlist_ytdlp_required(video_id, reason)
+
+    item = broadcast_state.current_item()
+    display_title = title or (item.title if item else "") or "YouTube"
+
+    dur = float(item.duration or 0) if item else 0.0
+    if dur <= 0:
+        try:
+            dur = _fetch_youtube_duration(video_id)
+        except Exception:
+            dur = 0.0
+
+    if youtube_stream_only():
+        _emit_mux_playback(
+            video_id,
+            title=display_title,
+            duration=dur,
+            index=index,
+        )
+        return
+
+    if _is_track_unplayable(item):
+        _skip_to_next_track(f"다운로드 실패 — {display_title}")
+        return
+
+    if is_download_ready(video_id):
+        _emit_ytdlp_local_playback(
+            video_id,
+            title=display_title,
+            duration=dur,
+            index=index,
+        )
+        return
+
+    try:
+        ensure_youtube_downloaded(video_id)
+    except Exception as exc:
+        get_logger().warning(
+            "ytdlp download failed at playback id=%s: %s", video_id, exc
+        )
+
+    if is_download_ready(video_id):
+        _emit_ytdlp_local_playback(
+            video_id,
+            title=display_title,
+            duration=dur,
+            index=index,
+        )
+        return
+
+    _mark_video_ytdlp_download_failed(video_id)
+    _skip_to_next_track(f"다운로드 실패 — {display_title}")
+
+
+def _runtime_ytdlp_playback(
+    video_id: str,
+    index: int,
+    *,
+    title: str,
+    reason: str = "embed_blocked_runtime",
+) -> None:
+    """방송 중 임베드 실패 → yt-dlp 로컬 재생."""
+    _play_ytdlp_at_index(
+        video_id,
+        index,
+        title=title,
+        reason=reason,
+        mark_required=True,
+    )
+
+
+@socketio.on("embed_scan_client_ready", namespace="/broadcast")
+def on_embed_scan_client_ready(_data=None):
+    """방송 페이지 JS 로드 완료 — 임베드 검사 시작."""
+    global _embed_scan_broadcast_ready
+    with _embed_scan_lock:
+        _embed_scan_broadcast_ready = True
+        pending = _embed_scan_pending_payload
+    _embed_scan_client_ready.set()
+    get_logger().info("embed scan client ready sid=%s", request.sid)
+    if pending and _ytdlp_scan_running:
+        emit("embed_scan_start", pending)
+
+
+@socketio.on("embed_scan_progress", namespace="/broadcast")
+def on_embed_scan_progress(data=None):
+    payload = data if isinstance(data, dict) else {}
+    with _embed_scan_lock:
+        pending = _embed_scan_pending_payload is not None
+    if not _ytdlp_scan_running and not pending:
+        return
+    done = int(payload.get("done", 0))
+    total = int(payload.get("total", 1))
+    pct_raw = payload.get("percent")
+    pct = int(pct_raw) if pct_raw is not None else None
+    _emit_ytdlp_scan_progress(
+        done,
+        max(total, 1),
+        str(payload.get("status") or ""),
+        True,
+        include_broadcast=True,
+        phase="방송 시작 전",
+        percent=pct,
+    )
+
+
+@socketio.on("embed_scan_complete", namespace="/broadcast")
+def on_embed_scan_complete(data=None):
+    global _embed_scan_results, _embed_scan_pending_payload
+    with _embed_scan_lock:
+        pending = _embed_scan_pending_payload is not None
+    if not _ytdlp_scan_running and not pending:
+        return
+    payload = data if isinstance(data, dict) else {}
+    _embed_scan_results = list(payload.get("results") or [])
+    with _embed_scan_lock:
+        _embed_scan_pending_payload = None
+    _embed_scan_done.set()
 
 
 @socketio.on("youtube_embed_blocked", namespace="/broadcast")
 def on_youtube_embed_blocked(data=None):
-    """퍼가기 금지 — yt-dlp 스트림을 방송 화면 <video>로 재생 (진행률·종료 감지)."""
+    """퍼가기 불가 — yt-dlp 로컬 재생 (다음 곡 건너뛰지 않음)."""
     payload = data if isinstance(data, dict) else {}
     video_id = (payload.get("id") or "").strip()
     if not video_id:
@@ -1451,63 +2769,33 @@ def on_youtube_embed_blocked(data=None):
 
     item = broadcast_state.current_item()
     title = (payload.get("title") or (item.title if item else "")) or "YouTube"
-    _prefetch_playlist_streams(finished_index)
+    _runtime_ytdlp_playback(
+        video_id,
+        finished_index,
+        title=title,
+        reason="embed_blocked_runtime",
+    )
 
-    stream_gen = current_stream_generation()
 
-    def worker() -> None:
-        try:
-            if stream_gen != current_stream_generation():
-                return
-            meta = _cache_youtube_stream(video_id)
-            if stream_gen != current_stream_generation():
-                return
-            duration = float(meta.get("duration") or 0)
-            if duration <= 0 and item:
-                duration = float(item.duration or 0)
-            if duration <= 0:
-                duration = _fetch_youtube_duration(video_id)
-            if stream_gen != current_stream_generation():
-                return
-            socketio.emit(
-                "youtube_stream_playback",
-                {
-                    "url": f"/api/youtube/stream/{video_id}",
-                    "video_id": video_id,
-                    "title": title,
-                    "duration": duration,
-                    "index": finished_index,
-                },
-                namespace="/broadcast",
-            )
-        except Exception as exc:
-            get_logger().error(
-                "youtube stream fallback failed id=%s: %s", video_id, exc, exc_info=True
-            )
-            duration = 0.0
-            if item:
-                duration = float(item.duration or 0)
-            if duration <= 0:
-                duration = _fetch_youtube_duration(video_id)
-            cfg = load_config()
-            display_index = int(cfg.get("broadcast_display_index", 0))
-            if broadcast_command_queue:
-                broadcast_command_queue.put(
-                    {
-                        "action": "open_external_youtube",
-                        "video_id": video_id,
-                        "display_index": display_index,
-                        "duration": duration,
-                        "finished_index": finished_index,
-                    }
-                )
-                notify_youtube_browser_fallback_started(
-                    video_id, finished_index, title
-                )
-            else:
-                notify_youtube_stream_failed(finished_index, str(exc))
-
-    threading.Thread(target=worker, daemon=True).start()
+@socketio.on("request_ytdlp_playback", namespace="/broadcast")
+def on_request_ytdlp_playback(data=None):
+    """플레이리스트에 표시된 yt-dlp 곡 — 로컬 파일 재생 요청."""
+    payload = data if isinstance(data, dict) else {}
+    video_id = (payload.get("id") or "").strip()
+    if not video_id:
+        return
+    try:
+        index = int(payload.get("index", broadcast_state.current_index))
+    except (TypeError, ValueError):
+        index = broadcast_state.current_index
+    title = (payload.get("title") or "").strip() or "YouTube"
+    _play_ytdlp_at_index(
+        video_id,
+        index,
+        title=title,
+        reason="",
+        mark_required=False,
+    )
 
 
 @socketio.on("song_finished", namespace="/broadcast")
@@ -1523,6 +2811,7 @@ def on_song_finished(data=None):
     if finished_idx is not None and broadcast_state.current_index > finished_idx:
         _emit_broadcast_track()
         return
+
     item = broadcast_state.advance_next()
     _emit_now_playing()
     _emit_playback_status()
@@ -1531,18 +2820,16 @@ def on_song_finished(data=None):
         _emit_broadcast_track()
         _notify_now_playing(item.title)
     else:
-        broadcast_state.stop()
-        _emit_now_playing()
-        _emit_playback_status()
-        socketio.emit("broadcast_ended", {}, namespace="/broadcast")
+        _finalize_broadcast_ended()
 
 
 @socketio.on("request_sync", namespace="/broadcast")
 def on_broadcast_request_sync(_data=None):
     """방송 화면 — 다음 곡 로드 실패 시 상태 재동기화."""
-    snap = broadcast_state.snapshot()
-    socketio.emit("load_track", snap, namespace="/broadcast")
-    if broadcast_state.current_index < 0:
+    if _ytdlp_scan_running:
+        return
+    resync_broadcast_clients(allow_during_scan=True)
+    if broadcast_state.playback_status == "ended":
         socketio.emit("broadcast_ended", {}, namespace="/broadcast")
 
 
@@ -1645,6 +2932,7 @@ def _read_broadcast_html() -> str:
 
 def create_socketio_app(cfg: dict[str, Any]) -> tuple[Flask, SocketIO]:
     init_app(cfg)
+    set_prep_running_check(lambda: _ytdlp_scan_running)
     playback_recovery.attach(
         socketio,
         load_config,

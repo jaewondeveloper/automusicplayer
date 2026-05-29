@@ -94,6 +94,15 @@
       </header>
       <main class="tab-panels">
         <section class="tab-panel active" id="panel-playlist">
+          <div class="playlist-tools">
+            <span class="playlist-tools-hint" id="ytdlpScanHint">방송 시작 시 방송 화면에서 임베드 검사 후, 필요한 곡만 고화질로 받습니다.</span>
+          </div>
+          <div class="playlist-scan-progress" id="ytdlpScanProgressWrap" hidden>
+            <div class="playlist-scan-progress-bar">
+              <div class="playlist-scan-progress-fill" id="ytdlpScanProgressFill"></div>
+            </div>
+            <p class="playlist-scan-progress-text" id="ytdlpScanProgressText"></p>
+          </div>
           <ul id="playlistList" class="playlist-list"></ul>
           <p class="empty-hint" id="playlistEmpty">플레이리스트가 비어 있습니다.</p>
         </section>
@@ -187,6 +196,21 @@
             <p class="hint">로컬 계정을 <strong>admin / 1234</strong>로 초기화합니다. 웹 관리 포털과 동일한 계정으로 재설정됩니다.</p>
             <button type="button" class="btn-danger btn-block" id="btnResetAccount">초기화</button>
           </div>
+          <div class="card" id="youtubeCookiesCard">
+            <h2 class="section-title">YouTube 쿠키 (다운로드용)</h2>
+            <p class="hint">
+              고화질 다운로드·「로봇이 아닙니다」 오류 방지에 필요합니다.
+              <strong>브라우저 확장 프로그램</strong>으로 한 번만 저장하면 됩니다.
+            </p>
+            <p class="hint" id="youtubeCookiesStatus">확인 중…</p>
+            <button type="button" class="btn-secondary btn-block" id="btnYoutubeCookiesRefresh">
+              YouTube 쿠키 파일 가져오기
+            </button>
+            <details class="youtube-cookie-guide" open style="margin-top:1rem">
+              <summary style="font-weight:600;cursor:pointer">📋 확장 프로그램 설치 · Export 방법 (처음 보시면 여기부터)</summary>
+              <pre id="youtubeCookiesHelp" class="youtube-cookie-guide-body"></pre>
+            </details>
+          </div>
           <div class="card">
             <h2 class="section-title">방송 브라우저</h2>
             <p class="hint">방송 화면을 여는 프로그램 (자동재생·소리). Edge 없으면 Chrome 사용.</p>
@@ -279,6 +303,26 @@
       <div class="modal-actions">
         <button type="button" class="btn-ghost" id="btnBroadcastWarnCancel">취소</button>
         <button type="button" class="btn-primary" id="btnBroadcastWarnConfirm" disabled>확인 후 방송</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay modal-overlay-priority" id="ytdlpPrepareModal" hidden>
+    <div class="modal card modal-wide ytdlp-prepare-modal">
+      <h2 id="ytdlpPrepareModalTitle">방송 준비 중</h2>
+      <p class="ytdlp-prepare-lead" id="ytdlpPrepareModalLead">
+        방송 화면(모니터)에서 YouTube 퍼가기 재생을 검사합니다.<br />
+        재생이 안 되는 곡은 yt-dlp로 고화질(1080p) 파일을 받아 재생합니다.
+      </p>
+      <div class="ytdlp-prepare-progress">
+        <div class="ytdlp-prepare-track">
+          <div class="ytdlp-prepare-fill" id="ytdlpPrepareModalFill"></div>
+        </div>
+        <p class="ytdlp-prepare-status" id="ytdlpPrepareModalStatus">준비 중…</p>
+      </div>
+      <p class="hint ytdlp-prepare-note">백그라운드에서 준비가 계속됩니다. 닫아도 방송 화면에서 진행을 볼 수 있습니다.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" id="btnYtdlpPrepareClose">닫기</button>
       </div>
     </div>
   </div>

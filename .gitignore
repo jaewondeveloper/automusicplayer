@@ -2,6 +2,7 @@ config.json
 playlist.json
 uploads/*
 !uploads/.gitkeep
+ytdlp_broadcast/
 assets/*
 !assets/.gitkeep
 __pycache__/
@@ -9,6 +10,8 @@ __pycache__/
 .venv/
 venv/
 .env
+youtube_cookies.txt
+**/youtube_cookies.txt
 WebView2Runtime/
 _wv2_unpack/
 dist/

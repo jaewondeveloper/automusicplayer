@@ -15,6 +15,7 @@ from panel_log import get_logger
 
 _browser_proc: subprocess.Popen | None = None
 _external_yt_proc: subprocess.Popen | None = None
+_kiosk_session_id = 0
 
 _CHROMIUM_AUTOPLAY_FLAGS = [
     "--autoplay-policy=no-user-gesture-required",
@@ -27,6 +28,13 @@ _CHROME_EXTRA = [
     "--disable-infobars",
     "--disable-session-crashed-bubble",
     "--noerrdialogs",
+    "--disable-restore-session-state",
+]
+
+_SESSION_RESTORE_FLAGS = [
+    "--disable-session-crashed-bubble",
+    "--disable-restore-session-state",
+    "--hide-crash-restore-bubble",
 ]
 
 
@@ -163,6 +171,7 @@ def _build_browser_args(
         f"--user-data-dir={_profile_dir(browser_id, profile_kind)}",
         "--no-first-run",
         "--no-default-browser-check",
+        *_SESSION_RESTORE_FLAGS,
         *_CHROMIUM_AUTOPLAY_FLAGS,
         f"--window-position={m.x},{m.y}",
         f"--window-size={m.width},{m.height}",
@@ -237,19 +246,30 @@ def _launch_kiosk_browser(
         return None
 
 
-def _open_browser_kiosk(url: str, display_index: int) -> None:
-    global _browser_proc
+def open_broadcast_window(
+    display_index: int,
+    port: int,
+    *,
+    embed_scan: bool = False,
+) -> bool:
+    """방송 키오스크 열기. 성공 시 True."""
+    global _kiosk_session_id
+    _kiosk_session_id += 1
+    query = "kiosk=1"
+    if embed_scan:
+        query += "&embed_scan=1"
+    url = f"http://127.0.0.1:{port}/broadcast/?{query}"
+    profile_kind = f"kiosk-{_kiosk_session_id}"
     close_broadcast_window()
-
-    proc = _launch_kiosk_browser(url, display_index, profile_kind="kiosk")
+    proc = _launch_kiosk_browser(
+        url, display_index, profile_kind=profile_kind
+    )
     if proc:
+        global _browser_proc
         _browser_proc = proc
         print(f"[{APP_NAME}] 방송 창: 전체화면 키오스크")
-
-
-def open_broadcast_window(display_index: int, port: int) -> None:
-    url = f"http://127.0.0.1:{port}/broadcast/?kiosk=1"
-    _open_browser_kiosk(url, display_index)
+        return True
+    return False
 
 
 def get_broadcast_pid() -> int | None:
@@ -260,6 +280,17 @@ def get_broadcast_pid() -> int | None:
         return int(_browser_proc.pid)
     except Exception:
         return None
+
+
+def is_broadcast_window_open() -> bool:
+    """방송 키오스크(Edge/Chrome)가 실행 중인지."""
+    global _browser_proc
+    if _browser_proc is None:
+        return False
+    try:
+        return _browser_proc.poll() is None
+    except Exception:
+        return False
 
 
 def open_external_youtube_video(video_id: str, display_index: int = 0) -> None:

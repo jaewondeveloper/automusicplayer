@@ -38,6 +38,94 @@
   let playbackDurationSec = 0;
   let isScrubbingProgress = false;
 
+  let ytdlpBatchRunning = false;
+  let ytdlpPrepareModalDismissed = false;
+
+  function resetBroadcastPrepUi() {
+    ytdlpBatchRunning = false;
+    ytdlpPrepareModalDismissed = false;
+    const modal = $("#ytdlpPrepareModal");
+    if (modal) modal.hidden = true;
+    const displayModal = $("#displayModal");
+    if (displayModal) displayModal.hidden = true;
+    const confirm = $("#btnDisplayConfirm");
+    if (confirm) confirm.disabled = false;
+    const wrap = $("#ytdlpScanProgressWrap");
+    const fill = $("#ytdlpScanProgressFill");
+    const text = $("#ytdlpScanProgressText");
+    const hint = $("#ytdlpScanHint");
+    if (wrap) wrap.hidden = true;
+    if (fill) fill.style.width = "0%";
+    if (text) text.textContent = "";
+    if (hint && !hint.dataset.busy) {
+      hint.textContent = "방송 시작 시 방송 화면에서 임베드 검사 후, 필요한 곡만 고화질로 받습니다.";
+    }
+    hint?.removeAttribute("data-busy");
+  }
+
+  function updateYtdlpScanProgress(data) {
+    const wrap = $("#ytdlpScanProgressWrap");
+    const fill = $("#ytdlpScanProgressFill");
+    const text = $("#ytdlpScanProgressText");
+    const hint = $("#ytdlpScanHint");
+    const modal = $("#ytdlpPrepareModal");
+    const modalFill = $("#ytdlpPrepareModalFill");
+    const modalStatus = $("#ytdlpPrepareModalStatus");
+    const modalTitle = $("#ytdlpPrepareModalTitle");
+    const done = Number((data && data.done) || 0);
+    const total = Number((data && data.total) || 0);
+    const percent =
+      typeof data?.percent === "number"
+        ? Math.max(0, Math.min(100, data.percent))
+        : total > 0
+          ? Math.max(0, Math.min(100, Math.round((done / total) * 100)))
+          : 0;
+    const running = !!(data && data.running);
+    ytdlpBatchRunning = running;
+    if (modal) {
+      if (running || (data && data.phase === "방송 시작 전")) {
+        if (!ytdlpPrepareModalDismissed) {
+          modal.hidden = false;
+        }
+        if (modalTitle) {
+          modalTitle.textContent =
+            (data && data.phase) === "방송준비중"
+              ? "방송준비중입니다"
+              : (data && data.phase) === "방송 시작 전"
+                ? "방송 시작 준비 중"
+                : "방송 준비 중";
+        }
+        if (modalFill) modalFill.style.width = `${percent}%`;
+        if (modalStatus) {
+          modalStatus.textContent =
+            (data && data.status) || `준비 중… ${done}/${total}`;
+        }
+      } else if (!running) {
+        ytdlpPrepareModalDismissed = false;
+        if (modalFill) modalFill.style.width = `${percent}%`;
+        if (modalStatus) modalStatus.textContent = (data && data.status) || "준비 완료";
+        if (modal) modal.hidden = true;
+      }
+    }
+    if (wrap && fill && text) {
+      wrap.hidden = !running && percent <= 0;
+      fill.style.width = `${percent}%`;
+      text.textContent = (data && data.status) || "";
+    }
+    if (running && hint && text) {
+      hint.dataset.busy = "1";
+      hint.textContent = text.textContent || `검사 중... ${done}/${total}`;
+    } else if (hint && text) {
+      hint.dataset.busy = "";
+      if (text.textContent) hint.textContent = text.textContent;
+      setTimeout(() => {
+        if (wrap) wrap.hidden = true;
+      }, 1500);
+    }
+    const startBtn = $("#btnDisplayConfirm");
+    if (startBtn) startBtn.disabled = running;
+  }
+
   async function fetchCsrf() {
     const res = await fetch("/api/csrf-token", { credentials: "same-origin" });
     const data = await res.json();
@@ -52,6 +140,33 @@
       renderPlaylist();
     });
 
+    socket.on("state_sync", (data) => {
+      if (!data) return;
+      playlist = data.playlist || playlist;
+      if (typeof data.current_index === "number") {
+        currentIndex = data.current_index;
+      }
+      if (data.playback_status) {
+        playbackStatus = data.playback_status;
+      }
+      if (playbackStatus === "stopped" || playbackStatus === "ended") {
+        resetBroadcastPrepUi();
+      }
+      renderPlaylist();
+      updatePauseButton();
+    });
+    socket.on("ytdlp_scan_progress", (data) => {
+      if (!data) return;
+      if (data.running || data.phase) {
+        updateYtdlpScanProgress(data);
+      }
+    });
+    socket.on("ytdlp_download_error", (data) => {
+      const msg = (data && data.message) || "다운로드 실패";
+      const title = (data && data.title) || "YouTube";
+      showAppAlert(`${title}\n\n${msg}`, { title: "yt-dlp 오류" });
+    });
+
     socket.on("now_playing", (data) => {
       currentIndex = data.index;
       const title = data.title || "재생 중인 곡 없음";
@@ -64,6 +179,13 @@
     socket.on("playback_status", (data) => {
       playbackStatus = data.status;
       updatePauseButton();
+      if (data.status === "stopped" || data.status === "ended") {
+        resetBroadcastPrepUi();
+      }
+    });
+
+    socket.on("broadcast_prep_reset", () => {
+      resetBroadcastPrepUi();
     });
 
     socket.on("search_progress", (data) => {
@@ -213,8 +335,25 @@
   function renderPlaylist() {
     const list = $("#playlistList");
     const empty = $("#playlistEmpty");
+    const scanHint = $("#ytdlpScanHint");
     list.innerHTML = "";
     empty.hidden = playlist.length > 0;
+    const youtubeCount = playlist.filter(
+      (item) => item && item.type === "youtube"
+    ).length;
+    if (scanHint && !scanHint.dataset.busy) {
+      if (!playlist.length) scanHint.textContent = "";
+      else if (youtubeCount > 0) {
+        const ytdlpN = playlist.filter(
+          (i) => i && i.type === "youtube" && i.ytdlp_checked && i.ytdlp_required
+        ).length;
+        if (ytdlpN > 0) {
+          scanHint.textContent = `YouTube ${youtubeCount}곡 · yt-dlp ${ytdlpN}곡 / 퍼가기 ${youtubeCount - ytdlpN}곡`;
+        } else {
+          scanHint.textContent = `YouTube ${youtubeCount}곡 · 재생 중 yt-dlp 자동 감지`;
+        }
+      } else scanHint.textContent = "";
+    }
 
     playlist.forEach((item, idx) => {
       const li = document.createElement("li");
@@ -238,7 +377,12 @@
       li.innerHTML = `
         <span class="drag-handle" title="드래그하여 순서 변경" aria-hidden="true">⋮⋮</span>
         ${thumb}
-        <span class="title" title="${escapeHtml(displayTitle)}">${escapeHtml(displayTitle)}</span>
+        <div class="title-wrap">
+          <span class="title" title="${escapeHtml(displayTitle)}">${escapeHtml(displayTitle)}</span>
+          <div class="meta-row">
+            ${item.ytdlp_checked && item.ytdlp_required ? '<span class="playlist-badge ytdlp">YT-DLP</span>' : ""}
+          </div>
+        </div>
         <button type="button" class="btn-delete" data-index="${idx}" aria-label="삭제">✕</button>
       `;
       list.appendChild(li);
@@ -677,7 +821,6 @@
       if (file) uploadLocal(file);
       e.target.value = "";
     });
-
     $("#btnBroadcastStart").addEventListener("click", () => {
       if (!playlist.length) {
         showAppAlert("플레이리스트에 곡을 추가해 주세요.");
@@ -701,6 +844,11 @@
     $("#btnDisplayCancel").addEventListener("click", () => {
       $("#displayModal").hidden = true;
     });
+    $("#btnYtdlpPrepareClose")?.addEventListener("click", () => {
+      ytdlpPrepareModalDismissed = true;
+      const modal = $("#ytdlpPrepareModal");
+      if (modal) modal.hidden = true;
+    });
     $("#btnDisplayConfirm").addEventListener("click", () => {
       $("#displayModal").hidden = true;
       if (!canUseBroadcastControls()) {
@@ -715,6 +863,16 @@
         showAppAlert("서버 연결 중입니다. 잠시 후 다시 시도해 주세요.");
         return;
       }
+      ytdlpPrepareModalDismissed = false;
+      const youtubeN = playlist.filter((i) => i && i.type === "youtube").length;
+      updateYtdlpScanProgress({
+        done: 0,
+        total: Math.max(youtubeN, 1),
+        percent: 0,
+        phase: "방송 시작 전",
+        status: "방송 화면에서 임베드 검사 및 다운로드 준비…",
+        running: true,
+      });
       socket.emit("control", { action: "start", display_index: selectedDisplay });
     });
 
@@ -747,7 +905,10 @@
     $("#btnNext").addEventListener("click", () => socket.emit("control", { action: "next" }));
     $("#btnStop").addEventListener("click", async () => {
       const ok = await showAppConfirm("방송을 종료할까요?", { title: "방송 종료" });
-      if (ok) socket.emit("control", { action: "stop" });
+      if (ok) {
+        resetBroadcastPrepUi();
+        socket.emit("control", { action: "stop" });
+      }
     });
 
     $("#btnLogout").addEventListener("click", async () => {
@@ -971,6 +1132,74 @@
         body: JSON.stringify({ enabled: e.target.checked }),
       });
     });
+
+    async function loadYoutubeCookiesStatus() {
+      const el = $("#youtubeCookiesStatus");
+      const help = $("#youtubeCookiesHelp");
+      if (!el) return;
+      try {
+        const res = await fetch("/api/youtube/cookies/status", {
+          credentials: "same-origin",
+        });
+        const data = await res.json();
+        if (help && (data.guide || data.help)) {
+          help.textContent = data.guide || data.help;
+        }
+        if (!res.ok) {
+          el.textContent = "상태 확인 실패";
+          return;
+        }
+        if (data.ok) {
+          el.textContent =
+            "저장됨 · " +
+            (data.path || "") +
+            (data.size ? " (" + data.size + " bytes)" : "");
+          el.className = "hint status-ok";
+        } else {
+          const blocking = (data.blocking_browsers || []).join(", ");
+          el.textContent =
+            "쿠키 없음" +
+            (blocking ? " — 실행 중: " + blocking : "") +
+            " · 위 「확장 프로그램 설치」 안내를 따라 주세요.";
+          el.className = "hint status-warn";
+        }
+      } catch (err) {
+        el.textContent = "상태 확인 오류: " + (err.message || err);
+      }
+    }
+
+    const btnCookies = $("#btnYoutubeCookiesRefresh");
+    if (btnCookies) {
+      btnCookies.addEventListener("click", async () => {
+        btnCookies.disabled = true;
+        btnCookies.textContent = "가져오는 중…";
+        try {
+          const res = await fetch("/api/youtube/cookies/refresh", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRFToken": csrfToken,
+            },
+            body: JSON.stringify({ close_browsers: false }),
+          });
+          const data = await res.json();
+          await loadYoutubeCookiesStatus();
+          showAppAlert(
+            data.ok
+              ? "YouTube 쿠키 파일을 인식했습니다. 이제 방송을 시작할 수 있습니다."
+              : "아직 쿠키 파일이 없습니다.\n\n설정 카드의 「확장 프로그램 설치 · Export 방법」을 따라 youtube_cookies.txt 를 저장한 뒤, 이 버튼을 다시 눌러 주세요.",
+            { title: data.ok ? "완료" : "쿠키 파일 필요" }
+          );
+        } catch (err) {
+          showAppAlert(String(err.message || err), { title: "오류" });
+        } finally {
+          btnCookies.disabled = false;
+          btnCookies.textContent = "YouTube 쿠키 파일 가져오기";
+        }
+      });
+    }
+    loadYoutubeCookiesStatus();
   }
 
   function updateServerStatusFromData(data) {
@@ -1198,6 +1427,30 @@
     });
   }
 
+  async function maybeShowYoutubeCookiesWarning() {
+    try {
+      const res = await fetch("/api/youtube/cookies/status", {
+        credentials: "same-origin",
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.ok) return;
+      const settingsTab = document.querySelector('.sidebar-tab[data-tab="settings"]');
+      if (settingsTab) settingsTab.click();
+      const card = document.getElementById("youtubeCookiesCard");
+      if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+      showAppAlert(
+        "YouTube 고화질 다운로드용 쿠키 파일이 없습니다.\n\n" +
+          "설정 탭 → 「YouTube 쿠키」에서\n" +
+          "「확장 프로그램 설치 · Export 방법」을 따라\n" +
+          "youtube_cookies.txt 를 저장한 뒤\n" +
+          "「YouTube 쿠키 파일 가져오기」를 눌러 주세요.\n\n" +
+          "(쿠키 파일은 다른 사람에게 보내지 마세요.)",
+        { title: "YouTube 쿠키 필요", okText: "확인" }
+      );
+    } catch (_) {}
+  }
+
   async function init() {
     initTabs();
     initSocket();
@@ -1211,6 +1464,7 @@
     if (!isNativePanelSession()) tasks.push(updateServerStatus());
     await Promise.all(tasks);
     await maybeShowOnboarding();
+    await maybeShowYoutubeCookiesWarning();
     if (!isNativePanelSession()) {
       setInterval(updateServerStatus, 12000);
     }

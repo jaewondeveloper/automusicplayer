@@ -8,7 +8,7 @@ from typing import Callable
 from panel_log import get_logger
 
 _log = get_logger()
-_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="yt-prefetch")
+_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="yt-prefetch")
 _inflight: set[str] = set()
 _inflight_lock = threading.Lock()
 

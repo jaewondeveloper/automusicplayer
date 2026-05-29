@@ -33,8 +33,10 @@ _command_queue: queue.Queue = queue.Queue()
 _shutting_down = False
 
 
-def _resync_broadcast_after_open(port: int) -> None:
+def _resync_broadcast_after_open(port: int, embed_scan: bool = False) -> None:
     """방송 키오스크가 뜬 뒤 load_track 이벤트가 유실되지 않도록 재동기화."""
+    if embed_scan:
+        return
     import urllib.error
     import urllib.request
 
@@ -60,8 +62,16 @@ def _resync_broadcast_after_open(port: int) -> None:
         log.error("broadcast resync failed", exc_info=True)
 
 
-def _schedule_open_broadcast(display_index: int, port: int) -> None:
-    """방송 창은 Win32 메인 스레드에서 연다 (백그라운드 스레드·MessageBox 오류 방지)."""
+def _schedule_open_broadcast(
+    display_index: int,
+    port: int,
+    *,
+    embed_scan: bool = False,
+    wait_open: bool = False,
+) -> bool:
+    """방송 창은 Win32 메인 스레드에서 연다. wait_open=True 이면 창 뜰 때까지 대기."""
+    opened = threading.Event()
+    open_ok: list[bool] = [False]
 
     def _open_on_main_thread() -> None:
         from broadcast_window import get_broadcast_pid, open_broadcast_window
@@ -69,31 +79,48 @@ def _schedule_open_broadcast(display_index: int, port: int) -> None:
 
         try:
             minimize_other_windows(set())
-            open_broadcast_window(display_index, port)
-            threading.Thread(
-                target=_resync_broadcast_after_open,
-                args=(port,),
-                daemon=True,
-            ).start()
-            setup_panel_logging().info(
-                "broadcast window opened display=%s port=%s",
-                display_index,
-                port,
-            )
-            pid = get_broadcast_pid()
-            if pid:
+            ok = open_broadcast_window(display_index, port, embed_scan=embed_scan)
+            open_ok[0] = bool(ok)
+            if ok:
                 threading.Thread(
-                    target=focus_process_main_window,
-                    args=(pid,),
+                    target=_resync_broadcast_after_open,
+                    args=(port, embed_scan),
                     daemon=True,
                 ).start()
+                setup_panel_logging().info(
+                    "broadcast window opened display=%s port=%s embed_scan=%s",
+                    display_index,
+                    port,
+                    embed_scan,
+                )
+                pid = get_broadcast_pid()
+                if pid:
+                    threading.Thread(
+                        target=focus_process_main_window,
+                        args=(pid,),
+                        daemon=True,
+                    ).start()
+                else:
+                    setup_panel_logging().warning(
+                        "broadcast process pid missing after open"
+                    )
             else:
-                setup_panel_logging().warning("broadcast process pid missing after open")
+                setup_panel_logging().error(
+                    "open_broadcast failed display=%s embed_scan=%s",
+                    display_index,
+                    embed_scan,
+                )
         except Exception:
             setup_panel_logging().error("open_broadcast failed", exc_info=True)
+        finally:
+            opened.set()
 
     enqueue_panel_window_command("minimize")
-    run_on_main_thread(_open_on_main_thread, delay=0.15)
+    run_on_main_thread(_open_on_main_thread, delay=0.05)
+    if wait_open:
+        opened.wait(timeout=25.0)
+        return open_ok[0]
+    return True
 
 
 def _watch_external_youtube(finished_index: int, duration: float) -> None:
@@ -167,9 +194,82 @@ def _process_commands(port: int) -> None:
         try:
             if action == "open_broadcast":
                 display_index = int(cmd.get("display_index", 0))
-                _schedule_open_broadcast(display_index, port)
+                embed_scan = bool(cmd.get("embed_scan"))
+                wait_open = bool(cmd.get("wait_open"))
+                _schedule_open_broadcast(
+                    display_index,
+                    port,
+                    embed_scan=embed_scan,
+                    wait_open=wait_open,
+                )
             elif action == "close_broadcast":
-                run_on_main_thread(close_broadcast_window)
+                done = cmd.get("done")
+
+                def _close_on_main() -> None:
+                    close_broadcast_window()
+                    if done is not None:
+                        done.set()
+
+                run_on_main_thread(_close_on_main)
+            elif action == "restart_broadcast":
+                display_index = int(cmd.get("display_index", 0))
+                embed_scan = bool(cmd.get("embed_scan"))
+                port = int(cmd.get("port", WEBSITE_PORT))
+                done: threading.Event = cmd["done"]
+                ok: list[bool] = cmd["ok"]
+                log = setup_panel_logging()
+
+                try:
+                    from broadcast_window import (
+                        get_broadcast_pid,
+                        open_broadcast_window,
+                    )
+                    from win_desktop import focus_process_main_window, minimize_other_windows
+
+                    from youtube_util import refresh_youtube_cookies_file
+
+                    enqueue_panel_window_command("minimize")
+                    close_broadcast_window()
+                    time.sleep(0.85)
+                    if not refresh_youtube_cookies_file(close_browsers=True):
+                        log.warning(
+                            "youtube cookies export failed — "
+                            "close all Edge/Chrome windows, log in to YouTube, retry"
+                        )
+                    minimize_other_windows(set())
+                    ok[0] = bool(
+                        open_broadcast_window(
+                            display_index, port, embed_scan=embed_scan
+                        )
+                    )
+                    if ok[0]:
+                        log.info(
+                            "broadcast window restarted display=%s embed_scan=%s",
+                            display_index,
+                            embed_scan,
+                        )
+                        threading.Thread(
+                            target=_resync_broadcast_after_open,
+                            args=(port, embed_scan),
+                            daemon=True,
+                        ).start()
+                        pid = get_broadcast_pid()
+                        if pid:
+
+                            def _focus_broadcast() -> None:
+                                focus_process_main_window(pid)
+
+                            run_on_main_thread(_focus_broadcast, delay=0.1)
+                    else:
+                        log.error(
+                            "restart_broadcast open failed display=%s",
+                            display_index,
+                        )
+                except Exception:
+                    log.error("restart_broadcast failed", exc_info=True)
+                    ok[0] = False
+                finally:
+                    done.set()
             elif action == "open_external_youtube":
                 video_id = str(cmd.get("video_id") or "")
                 display_index = int(cmd.get("display_index", 0))
@@ -231,6 +331,20 @@ def main() -> None:
 
     cfg = load_config()
     port = int(cfg.get("port", 8765))
+
+    try:
+        from youtube_util import import_youtube_cookies_file, resolve_youtube_cookiefile
+
+        ck = resolve_youtube_cookiefile(cfg)
+        if ck:
+            setup_panel_logging().info("youtube cookies file=%s", ck)
+        elif import_youtube_cookies_file():
+            setup_panel_logging().info(
+                "youtube cookies imported to %s",
+                resolve_youtube_cookiefile(cfg),
+            )
+    except Exception as exc:
+        setup_panel_logging().warning("youtube cookies init: %s", exc)
 
     set_broadcast_queue(_command_queue)
     create_socketio_app(cfg)

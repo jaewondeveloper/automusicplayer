@@ -60,7 +60,7 @@ for pkg in ("flask", "flask_login", "werkzeug", "jinja2", "certifi"):
 
 hiddenimports_ytdlp: list[str] = []
 hiddenimports_extra: list[str] = []
-for pkg in ("yt_dlp", "Cryptodome", "certifi", "cffi"):
+for pkg in ("yt_dlp", "yt_dlp_ejs", "imageio_ffmpeg", "Cryptodome", "certifi", "cffi"):
     try:
         d, b, h = collect_all(pkg)
         datas += d
@@ -75,7 +75,7 @@ for pkg in ("yt_dlp", "Cryptodome", "certifi", "cffi"):
 # 앱 전용 모듈 (Analysis 가 놓치기 쉬운 항목)
 _APP_MODULES = (
     "playback_recovery",
-    "youtube_prefetch",
+    "youtube_download_cache",
     "website_server",
     "network_utils",
     "cloudflare_sync",
@@ -143,6 +143,8 @@ _collect_packages = (
     "markupsafe",
     "wtforms",
     "yt_dlp",
+    "yt_dlp_ejs",
+    "imageio_ffmpeg",
     "cryptography",
     "certifi",
     "urllib3",
