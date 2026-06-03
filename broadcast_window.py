@@ -19,6 +19,7 @@ _browser_proc: subprocess.Popen | None = None
 _external_yt_proc: subprocess.Popen | None = None
 _broadcast_lock = threading.RLock()
 _KIOSK_PROFILE_KIND = "kiosk-broadcast"
+_kiosk_session_pids: set[int] = set()
 _SUBPROCESS_FLAGS = (
     subprocess.CREATE_NO_WINDOW
     if sys.platform == "win32" and hasattr(subprocess, "CREATE_NO_WINDOW")
@@ -154,13 +155,35 @@ def list_broadcast_kiosk_pids() -> list[int]:
 
 def kill_stale_broadcast_kiosks(*, keep_pid: int | None = None) -> int:
     """추적 밖에 남은 방송 키오스크 프로세스를 모두 종료."""
+    keep = set(_kiosk_session_pids)
+    if keep_pid:
+        keep.add(int(keep_pid))
     killed = 0
     for pid in list_broadcast_kiosk_pids():
-        if keep_pid and pid == keep_pid:
+        if pid in keep:
             continue
         _kill_process_tree(pid)
         killed += 1
     return killed
+
+
+def _sync_kiosk_session_pids() -> None:
+    """Edge/Chrome은 자식 프로세스가 여러 개 — 세션 PID 전체를 기억한다."""
+    global _kiosk_session_pids
+    pids = list_broadcast_kiosk_pids()
+    if pids:
+        _kiosk_session_pids = set(pids)
+    elif _browser_proc is not None:
+        try:
+            if _browser_proc.poll() is None:
+                _kiosk_session_pids = {int(_browser_proc.pid)}
+        except Exception:
+            pass
+
+
+def _clear_kiosk_session_pids() -> None:
+    global _kiosk_session_pids
+    _kiosk_session_pids = set()
 
 
 def _any_broadcast_kiosk_running() -> bool:
@@ -174,11 +197,15 @@ def wait_until_broadcast_closed(timeout: float = 6.0) -> bool:
     deadline = time.time() + max(0.5, timeout)
     while time.time() < deadline:
         if not _any_broadcast_kiosk_running():
+            _clear_kiosk_session_pids()
             return True
         time.sleep(0.12)
     kill_stale_broadcast_kiosks()
     time.sleep(0.25)
-    return not _any_broadcast_kiosk_running()
+    closed = not _any_broadcast_kiosk_running()
+    if closed:
+        _clear_kiosk_session_pids()
+    return closed
 
 
 def _edge_paths() -> list[Path]:
@@ -403,22 +430,17 @@ def open_broadcast_window(
 
         global _browser_proc
         _browser_proc = proc
-        time.sleep(0.2)
-        stale = list_broadcast_kiosk_pids()
-        keep = int(proc.pid)
-        if len(stale) > 1 or (len(stale) == 1 and stale[0] != keep):
-            get_logger().warning(
-                "multiple broadcast kiosks detected pids=%s keep=%s — closing extras",
-                stale,
-                keep,
-            )
-            for pid in stale:
-                if pid != keep:
-                    _kill_process_tree(pid)
-            wait_until_broadcast_closed(timeout=3.0)
+        _sync_kiosk_session_pids()
+        time.sleep(0.15)
+        _sync_kiosk_session_pids()
 
-        print(f"[{APP_NAME}] 방송 창: 전체화면 키오스크 (pid={keep})")
-        get_logger().info("broadcast kiosk single instance pid=%s", keep)
+        keep = int(proc.pid)
+        print(f"[{APP_NAME}] 방송 창: 전체화면 키오스크 (pid={keep}, session={sorted(_kiosk_session_pids)})")
+        get_logger().info(
+            "broadcast kiosk opened pid=%s session_pids=%s",
+            keep,
+            sorted(_kiosk_session_pids),
+        )
         return True
 
 
@@ -499,6 +521,7 @@ def close_broadcast_window() -> None:
     with _broadcast_lock:
         global _browser_proc
         close_external_youtube()
+        _clear_kiosk_session_pids()
 
         tracked_pid: int | None = None
         if _browser_proc is not None:

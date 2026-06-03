@@ -370,20 +370,11 @@ def _skip_to_next_track(reason: str = "") -> bool:
 
 
 def _hard_reset_for_broadcast_start() -> None:
-    """방송 시작마다 첫 방송과 같이 상태·준비 플래그 초기화."""
+    """방송 시작마다 상태·준비 플래그 초기화 (방송 창은 유지·즉시 재사용)."""
     global _embed_scan_results, _embed_scan_broadcast_ready, _embed_scan_pending_payload
 
     _cancel_broadcast_prep()
     _clear_ytdlp_emit_cache()
-    try:
-        from broadcast_window import close_broadcast_window, is_broadcast_window_open
-
-        if is_broadcast_window_open():
-            _close_broadcast_window_and_wait(timeout=6.0)
-        else:
-            close_broadcast_window()
-    except Exception:
-        _close_broadcast_window_and_wait(timeout=4.0)
     try:
         from broadcast_window import close_external_youtube
 
@@ -1205,9 +1196,21 @@ def _apply_embed_scan_results(results: list[dict[str, Any]]) -> int:
     return required_count
 
 
+def _ensure_broadcast_window_open(display_index: int, *, timeout: float = 20.0) -> bool:
+    """방송 키오스크가 없으면 연다 (이미 있으면 유지)."""
+    try:
+        from broadcast_window import is_broadcast_window_open
+
+        if is_broadcast_window_open():
+            return True
+    except Exception:
+        pass
+    return _restart_broadcast_window(display_index, embed_scan=False, timeout=timeout)
+
+
 def _prepare_broadcast_youtube(display_index: int, prep_token: int) -> None:
-    """방송 시작 전: 방송 화면에서 임베드 검사 → yt-dlp 필요 곡 다운로드."""
-    global _embed_scan_broadcast_ready, _embed_scan_results, _embed_scan_pending_payload
+    """방송 시작 전: 서버 임베드 검사 → yt-dlp 필요 곡 다운로드 (방송 창은 유지)."""
+    global _embed_scan_pending_payload
 
     def _abort_if_cancelled() -> None:
         if not _prep_alive(prep_token):
@@ -1215,22 +1218,14 @@ def _prepare_broadcast_youtube(display_index: int, prep_token: int) -> None:
 
     phase = "방송 시작 전"
     youtube_jobs = [
-        {"id": str(row.get("id") or "").strip(), "title": str(row.get("title") or "")}
+        row
         for row in broadcast_state.get_playlist_dicts()
         if row.get("type") == "youtube" and str(row.get("id") or "").strip()
     ]
     total = len(youtube_jobs)
-    scan_payload = {
-        "videos": youtube_jobs,
-        "probe_seconds": EMBED_PROBE_SECONDS,
-    }
 
-    _embed_scan_done.clear()
-    _embed_scan_results = []
-    _embed_scan_client_ready.clear()
     with _embed_scan_lock:
-        _embed_scan_broadcast_ready = False
-        _embed_scan_pending_payload = scan_payload
+        _embed_scan_pending_payload = None
 
     _abort_if_cancelled()
     enqueue_panel_window_command("minimize")
@@ -1243,7 +1238,7 @@ def _prepare_broadcast_youtube(display_index: int, prep_token: int) -> None:
         phase=phase,
     )
 
-    if not _restart_broadcast_window(display_index, embed_scan=True, timeout=25.0):
+    if not _ensure_broadcast_window_open(display_index, timeout=20.0):
         raise RuntimeError(
             "방송 창을 열 수 없습니다. Edge 또는 Chrome이 설치되어 있는지 확인해 주세요."
         )
@@ -1260,73 +1255,16 @@ def _prepare_broadcast_youtube(display_index: int, prep_token: int) -> None:
             include_broadcast=True,
             phase=phase,
         )
-        if refresh_youtube_cookies_file(
-            close_browsers=True, preserve_broadcast_kiosk=True
-        ):
-            _emit_ytdlp_scan_progress(
-                0,
-                max(total, 1),
-                "YouTube 쿠키 저장 완료",
-                True,
-                include_broadcast=True,
-                phase=phase,
-            )
-        else:
-            get_logger().warning(
-                "youtube cookies not available — use manual cookies.txt (see panel settings)"
-            )
-            _emit_ytdlp_scan_progress(
-                0,
-                max(total, 1),
-                "YouTube 쿠키 없음 — 설정에서 «쿠키 안내» 참고 (다운로드 실패 가능)",
-                True,
-                include_broadcast=True,
-                phase=phase,
-            )
-    _abort_if_cancelled()
-    scan_label = (
-        f"임베드 재생 검사 중… (YouTube {total}곡)"
-        if total
-        else "임베드 재생 검사 준비…"
-    )
-    _emit_ytdlp_scan_progress(
-        0,
-        max(total, 1),
-        scan_label,
-        True,
-        include_broadcast=True,
-        phase=phase,
-    )
-
-    ready_deadline = time.time() + 20.0
-    while time.time() < ready_deadline:
-        _abort_if_cancelled()
-        if _embed_scan_broadcast_ready:
-            break
-        time.sleep(0.15)
-    else:
-        get_logger().warning(
-            "embed scan broadcast_ready slow; will push embed_scan_start anyway"
+        refresh_youtube_cookies_file(
+            close_browsers=False,
+            preserve_broadcast_kiosk=True,
         )
 
     _abort_if_cancelled()
-    if not _embed_scan_client_ready.wait(timeout=8.0):
-        get_logger().warning("embed scan client_ready timeout; pushing scan start")
-    socketio.emit("embed_scan_start", scan_payload, namespace="/broadcast")
-    timeout = max(90.0, total * 12.0)
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        _abort_if_cancelled()
-        if _embed_scan_done.wait(timeout=0.5):
-            break
-    else:
-        get_logger().error("embed scan timed out after %.0fs", timeout)
-        raise TimeoutError("임베드 재생 검사 시간 초과")
-
-    _abort_if_cancelled()
-    _apply_embed_scan_results(_embed_scan_results)
-    with _embed_scan_lock:
-        _embed_scan_pending_payload = None
+    _scan_playlist_for_ytdlp_required(
+        phase=phase,
+        include_broadcast=True,
+    )
     _abort_if_cancelled()
     _emit_ytdlp_scan_progress(
         0,
@@ -1350,7 +1288,6 @@ def _prepare_broadcast_youtube(display_index: int, prep_token: int) -> None:
         include_broadcast=True,
         phase="방송준비중",
     )
-    socketio.emit("embed_scan_done", {}, namespace="/broadcast")
 
 
 def auto_setup_admin() -> None:
@@ -2653,6 +2590,7 @@ def on_control(data):
         if not broadcast_state.get_playlist_dicts():
             return _deny_broadcast_control("플레이리스트에 곡을 추가해 주세요.")
         _hard_reset_for_broadcast_start()
+        _queue_broadcast_window(display_index, embed_scan=False, wait_open=False)
 
         def start_after_prep() -> None:
             global _embed_scan_pending_payload
