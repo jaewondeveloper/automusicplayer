@@ -3,8 +3,29 @@ playlist.json
 uploads/*
 !uploads/.gitkeep
 ytdlp_broadcast/
+yt-dlp-cache/
 assets/*
 !assets/.gitkeep
+!assets/bundled/
+!assets/bundled/**
+
+# 쿠키·인증·로컬 비밀 (저장소에 올리지 않음)
+cookies.txt
+**/cookies.txt
+*.cookies
+youtube_cookies.txt
+**/youtube_cookies.txt
+
+# 중복 로고 (assets/bundled/njbs-logo.png 사용)
+4ca7b4607_njbs-logo.png
+
+# vendored lib 안의 중첩 git 메타데이터
+**/.git/
+!/.git/
+
+# Python 빌드 산출
+*.egg-info/
+.eggs/
 __pycache__/
 *.pyc
 .venv/

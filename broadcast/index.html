@@ -728,6 +728,9 @@
       var activePlaybackMode = "none";
       var recoveryInProgress = false;
       var lastHeartbeatAt = 0;
+      var broadcastWakeLock = null;
+      var focusLossAt = 0;
+      var kioskKeepaliveTimer = null;
       var playbackErrorAlert = document.getElementById("playbackErrorAlert");
       var playbackErrorMessage = document.getElementById("playbackErrorMessage");
       var recoveryProgressWrap = document.getElementById("recoveryProgressWrap");
@@ -1211,6 +1214,8 @@
       }
 
       function hidePlayers() {
+        releaseBroadcastWakeLock();
+        stopKioskKeepalive();
         clearInterval(ytPollTimer);
         ytPollTimer = null;
         clearTrackTimers();
@@ -1316,6 +1321,118 @@
             applyYoutubeQuality(ytPlayer);
           } catch (e) {}
         }
+      }
+
+      function applyBroadcastStoppedUi(wasActive) {
+        resetBroadcastUi();
+        hidePlayers();
+        if (wasActive || endScreen.classList.contains("show")) {
+          showEndScreen();
+        }
+      }
+
+      function resumePlaybackAfterFocusLoss() {
+        if (embedScanMode || embedScanActive || ytdlpPrepareRunning) return;
+        if (playbackStatus === "stopped" || playbackStatus === "ended") {
+          if (endScreen && !endScreen.classList.contains("show")) {
+            applyBroadcastStoppedUi(true);
+          }
+          return;
+        }
+        if (playbackStatus !== "playing") return;
+        if (!audioUnlocked) {
+          if (KIOSK_MODE) tryKioskAutounlock();
+          return;
+        }
+        applyVolumeToPlayers();
+        if (activePlaybackMode === "youtube" && ytPlayer) {
+          try {
+            var ytSt = ytPlayer.getPlayerState();
+            if (ytSt !== 1 && ytSt !== 3) ytPlayer.playVideo();
+            applyYoutubeQuality(ytPlayer);
+          } catch (e) {}
+        }
+        if (
+          localVideo &&
+          localVideo.src &&
+          (streamPlaybackActive ||
+            activePlaybackMode === "local" ||
+            activePlaybackMode === "stream")
+        ) {
+          if (localVideo.paused) {
+            localVideo.play().then(applyVolumeToPlayers).catch(function () {});
+          }
+        }
+        tickProgress();
+        lastHeartbeatAt = 0;
+        emitPlaybackHeartbeat();
+      }
+
+      function acquireBroadcastWakeLock() {
+        if (!KIOSK_MODE || !navigator.wakeLock || playbackStatus !== "playing") return;
+        if (broadcastWakeLock) return;
+        navigator.wakeLock
+          .request("screen")
+          .then(function (lock) {
+            broadcastWakeLock = lock;
+            lock.addEventListener("release", function () {
+              broadcastWakeLock = null;
+              if (playbackStatus === "playing") acquireBroadcastWakeLock();
+            });
+          })
+          .catch(function () {});
+      }
+
+      function releaseBroadcastWakeLock() {
+        if (!broadcastWakeLock) return;
+        try {
+          broadcastWakeLock.release();
+        } catch (e) {}
+        broadcastWakeLock = null;
+      }
+
+      function nudgePlaybackKeepalive() {
+        if (playbackStatus !== "playing" || currentIndex < 0 || !audioUnlocked) return;
+        if (activePlaybackMode === "youtube" && ytPlayer) {
+          try {
+            var st = ytPlayer.getPlayerState();
+            if (st === 2 || st === 5) ytPlayer.playVideo();
+          } catch (e) {}
+          return;
+        }
+        if (localVideo && localVideo.src && localVideo.paused) {
+          localVideo.play().catch(function () {});
+        }
+      }
+
+      function startKioskKeepalive() {
+        stopKioskKeepalive();
+        if (!KIOSK_MODE) return;
+        kioskKeepaliveTimer = setInterval(nudgePlaybackKeepalive, 2000);
+      }
+
+      function stopKioskKeepalive() {
+        if (!kioskKeepaliveTimer) return;
+        clearInterval(kioskKeepaliveTimer);
+        kioskKeepaliveTimer = null;
+      }
+
+      function onBroadcastPageHidden() {
+        focusLossAt = Date.now();
+      }
+
+      function onBroadcastPageVisible() {
+        var away = focusLossAt ? Date.now() - focusLossAt : 0;
+        focusLossAt = 0;
+        resumePlaybackAfterFocusLoss();
+        if (
+          away > 400 ||
+          playbackStatus === "stopped" ||
+          playbackStatus === "ended"
+        ) {
+          socket.emit("request_sync");
+        }
+        if (playbackStatus === "playing") acquireBroadcastWakeLock();
       }
 
       function startPlaybackAfterUnlock() {
@@ -1521,6 +1638,10 @@
         trackPlayStartedAt = Date.now();
         scheduleTrackTimers(item);
         startYtProgressPoll();
+        if (KIOSK_MODE && playbackStatus === "playing") {
+          acquireBroadcastWakeLock();
+          startKioskKeepalive();
+        }
       }
 
       function onPlayerStateChange(event) {
@@ -2685,23 +2806,40 @@
       });
 
       socket.on("load_track", function (state) {
+        var prevIndex = currentIndex;
+        var prevMode = activePlaybackMode;
+        var wasActive =
+          prevIndex >= 0 ||
+          prevMode !== "none" ||
+          streamPlaybackActive ||
+          streamFallbackRequested;
         playlist = state.playlist || [];
         currentIndex = state.current_index;
         playbackStatus = state.playback_status;
         clearAdvanceRetry();
         if (currentIndex < 0 || playbackStatus === "stopped" || playbackStatus === "ended") {
-          if (playbackStatus === "ended") showEndScreen();
+          if (playbackStatus === "stopped" || playbackStatus === "ended") {
+            applyBroadcastStoppedUi(wasActive);
+          }
           return;
         }
         playCurrent();
       });
 
       socket.on("playback_status", function (data) {
+        var wasActive =
+          currentIndex >= 0 ||
+          activePlaybackMode !== "none" ||
+          streamPlaybackActive ||
+          streamFallbackRequested;
         playbackStatus = data.status;
         if (playbackStatus === "stopped" || playbackStatus === "ended") {
-          resetBroadcastUi();
+          applyBroadcastStoppedUi(wasActive);
+          return;
         }
         if (playbackStatus === "paused") {
+          releaseBroadcastWakeLock();
+          stopKioskKeepalive();
           if (ytPlayer && ytPlayer.pauseVideo) {
             try {
               ytPlayer.pauseVideo();
@@ -2709,6 +2847,8 @@
           }
           localVideo.pause();
         } else if (playbackStatus === "playing") {
+          acquireBroadcastWakeLock();
+          startKioskKeepalive();
           if (!audioUnlocked) {
             if (KIOSK_MODE) {
               tryKioskAutounlock();
@@ -2779,6 +2919,16 @@
       document.addEventListener("keydown", handleEscapeKey, true);
       window.addEventListener("keydown", handleEscapeKey, true);
 
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "hidden") onBroadcastPageHidden();
+        else onBroadcastPageVisible();
+      });
+      window.addEventListener("focus", onBroadcastPageVisible);
+      window.addEventListener("blur", onBroadcastPageHidden);
+      window.addEventListener("pageshow", function (e) {
+        if (e.persisted) onBroadcastPageVisible();
+      });
+
       socket.on("connect", function () {
         if (embedScanMode || EMBED_SCAN) {
           signalEmbedScanClientReady();
@@ -2787,6 +2937,7 @@
         if (embedScanActive || embedScanSessionRunning) return;
         if (ytdlpPrepareRunning) return;
         socket.emit("request_sync");
+        resumePlaybackAfterFocusLoss();
         if (!audioUnlocked && currentIndex >= 0 && playbackStatus === "playing") {
           if (KIOSK_MODE) tryKioskAutounlock();
           else showAudioUnlockOverlay();

@@ -19,9 +19,19 @@ _kiosk_session_id = 0
 
 _CHROMIUM_AUTOPLAY_FLAGS = [
     "--autoplay-policy=no-user-gesture-required",
-    "--disable-features=PreloadMediaEngagementData,MediaEngagementBypassAutoplayPolicies",
+    (
+        "--disable-features=PreloadMediaEngagementData,"
+        "MediaEngagementBypassAutoplayPolicies,CalculateNativeWinOcclusion"
+    ),
     "--ignore-gpu-blocklist",
     "--enable-gpu-rasterization",
+]
+
+# Win 키·다른 창 포커스 시 키오스크가 멈추거나 UI가 굳는 현상 완화
+_KIOSK_FOCUS_STABILITY_FLAGS = [
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
 ]
 
 _CHROME_EXTRA = [
@@ -173,6 +183,7 @@ def _build_browser_args(
         "--no-default-browser-check",
         *_SESSION_RESTORE_FLAGS,
         *_CHROMIUM_AUTOPLAY_FLAGS,
+        *_KIOSK_FOCUS_STABILITY_FLAGS,
         f"--window-position={m.x},{m.y}",
         f"--window-size={m.width},{m.height}",
     ]
