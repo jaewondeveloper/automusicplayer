@@ -108,7 +108,7 @@ _embed_scan_broadcast_ready = False
 _embed_scan_pending_payload: dict[str, Any] | None = None
 _embed_scan_client_ready = threading.Event()
 _prep_token = 0
-EMBED_PROBE_SECONDS = 4
+EMBED_PROBE_SECONDS = 2.5
 _ytdlp_emit_lock = threading.Lock()
 _last_ytdlp_emit_key: tuple[int, str] | None = None
 
@@ -248,7 +248,7 @@ def _close_broadcast_window() -> None:
         broadcast_command_queue.put({"action": "close_broadcast"})
 
 
-def _close_broadcast_window_and_wait(timeout: float = 28.0) -> None:
+def _close_broadcast_window_and_wait(timeout: float = 8.0) -> None:
     if not broadcast_command_queue:
         return
     done = threading.Event()
@@ -370,12 +370,20 @@ def _skip_to_next_track(reason: str = "") -> bool:
 
 
 def _hard_reset_for_broadcast_start() -> None:
-    """방송 시작마다 첫 방송과 같이 상태·창·준비 플래그 초기화."""
+    """방송 시작마다 첫 방송과 같이 상태·준비 플래그 초기화."""
     global _embed_scan_results, _embed_scan_broadcast_ready, _embed_scan_pending_payload
 
     _cancel_broadcast_prep()
     _clear_ytdlp_emit_cache()
-    _close_broadcast_window_and_wait()
+    try:
+        from broadcast_window import close_broadcast_window, is_broadcast_window_open
+
+        if is_broadcast_window_open():
+            _close_broadcast_window_and_wait(timeout=6.0)
+        else:
+            close_broadcast_window()
+    except Exception:
+        _close_broadcast_window_and_wait(timeout=4.0)
     try:
         from broadcast_window import close_external_youtube
 
@@ -391,12 +399,16 @@ def _hard_reset_for_broadcast_start() -> None:
     _embed_scan_done.clear()
     _embed_scan_client_ready.clear()
     _clear_ytdlp_download_failed_flags()
-    try:
-        from youtube_download_cache import scan_and_repair_ytdlp_cache
 
-        scan_and_repair_ytdlp_cache()
-    except Exception as exc:
-        get_logger().warning("ytdlp cache scan failed: %s", exc)
+    def _deferred_cache_scan() -> None:
+        try:
+            from youtube_download_cache import scan_and_repair_ytdlp_cache
+
+            scan_and_repair_ytdlp_cache()
+        except Exception as exc:
+            get_logger().warning("ytdlp cache scan failed: %s", exc)
+
+    threading.Thread(target=_deferred_cache_scan, daemon=True).start()
     try:
         playback_recovery.dismiss_error()
     except Exception:
@@ -1222,18 +1234,35 @@ def _prepare_broadcast_youtube(display_index: int, prep_token: int) -> None:
 
     _abort_if_cancelled()
     enqueue_panel_window_command("minimize")
-    from youtube_util import refresh_youtube_cookies_file, resolve_youtube_cookiefile
-
     _emit_ytdlp_scan_progress(
         0,
         max(total, 1),
-        "YouTube 쿠키 확인 중…",
+        "방송 화면을 여는 중…",
         True,
         include_broadcast=True,
         phase=phase,
     )
+
+    if not _restart_broadcast_window(display_index, embed_scan=True, timeout=25.0):
+        raise RuntimeError(
+            "방송 창을 열 수 없습니다. Edge 또는 Chrome이 설치되어 있는지 확인해 주세요."
+        )
+    _abort_if_cancelled()
+
+    from youtube_util import refresh_youtube_cookies_file, resolve_youtube_cookiefile
+
     if not resolve_youtube_cookiefile():
-        if refresh_youtube_cookies_file(close_browsers=True):
+        _emit_ytdlp_scan_progress(
+            0,
+            max(total, 1),
+            "YouTube 쿠키 확인 중…",
+            True,
+            include_broadcast=True,
+            phase=phase,
+        )
+        if refresh_youtube_cookies_file(
+            close_browsers=True, preserve_broadcast_kiosk=True
+        ):
             _emit_ytdlp_scan_progress(
                 0,
                 max(total, 1),
@@ -1256,9 +1285,9 @@ def _prepare_broadcast_youtube(display_index: int, prep_token: int) -> None:
             )
     _abort_if_cancelled()
     scan_label = (
-        f"방송 화면에서 임베드 재생 검사 준비… (YouTube {total}곡)"
+        f"임베드 재생 검사 중… (YouTube {total}곡)"
         if total
-        else "방송 화면에서 임베드 재생 검사 준비…"
+        else "임베드 재생 검사 준비…"
     )
     _emit_ytdlp_scan_progress(
         0,
@@ -1269,29 +1298,22 @@ def _prepare_broadcast_youtube(display_index: int, prep_token: int) -> None:
         phase=phase,
     )
 
-    if not _restart_broadcast_window(display_index, embed_scan=True, timeout=60.0):
-        raise RuntimeError(
-            "방송 창을 열 수 없습니다. Edge 또는 Chrome이 설치되어 있는지 확인해 주세요."
-        )
-    _abort_if_cancelled()
-
-    # 메타데이터 대체 검사 없음 — 방송 화면 임베드 검사만 사용 (최대 약 90초 대기)
-    ready_deadline = time.time() + 90.0
+    ready_deadline = time.time() + 20.0
     while time.time() < ready_deadline:
         _abort_if_cancelled()
         if _embed_scan_broadcast_ready:
             break
-        time.sleep(0.25)
+        time.sleep(0.15)
     else:
         get_logger().warning(
             "embed scan broadcast_ready slow; will push embed_scan_start anyway"
         )
 
     _abort_if_cancelled()
-    if not _embed_scan_client_ready.wait(timeout=30.0):
+    if not _embed_scan_client_ready.wait(timeout=8.0):
         get_logger().warning("embed scan client_ready timeout; pushing scan start")
     socketio.emit("embed_scan_start", scan_payload, namespace="/broadcast")
-    timeout = max(180.0, total * 20.0)
+    timeout = max(90.0, total * 12.0)
     deadline = time.time() + timeout
     while time.time() < deadline:
         _abort_if_cancelled()
@@ -2356,7 +2378,9 @@ def api_youtube_cookies_refresh():
     import_path = str(data.get("path") or "").strip()
     if import_path:
         import_youtube_cookies_file(import_path)
-    ok = refresh_youtube_cookies_file(close_browsers=close_browsers)
+    ok = refresh_youtube_cookies_file(
+        close_browsers=close_browsers, preserve_broadcast_kiosk=True
+    )
     status = youtube_cookies_status()
     return jsonify({"ok": ok and status.get("ok"), **status})
 

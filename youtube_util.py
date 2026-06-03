@@ -644,10 +644,44 @@ def list_browsers_blocking_cookie_export() -> list[str]:
     return running
 
 
-def close_browsers_for_cookie_export() -> list[str]:
-    """쿠키 DB 잠금용 Edge/Chrome 프로세스만 종료 (WebView2·패널은 유지)."""
+def close_browsers_for_cookie_export(*, preserve_broadcast_kiosk: bool = True) -> list[str]:
+    """쿠키 DB 잠금용 Edge/Chrome 종료 (방송 키오스크 eumbang 프로필은 유지)."""
     if sys.platform != "win32":
         return []
+    if preserve_broadcast_kiosk:
+        script = (
+            "Get-CimInstance Win32_Process | Where-Object {"
+            "  ($_.Name -eq 'msedge.exe' -or $_.Name -eq 'chrome.exe') -and"
+            "  $_.CommandLine -and ($_.CommandLine -notmatch 'eumbang-(edge|chrome)-')"
+            "} | ForEach-Object { "
+            "  Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; "
+            "  $_.Name "
+            "}"
+        )
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", script],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            closed = [
+                line.strip()
+                for line in (r.stdout or "").splitlines()
+                if line.strip() in _COOKIE_EXPORT_KILL_EXE
+            ]
+            if closed:
+                time.sleep(0.35)
+                _log.info(
+                    "closed non-kiosk browsers for cookie export: %s",
+                    ", ".join(sorted(set(closed))),
+                )
+            return closed
+        except Exception as exc:
+            _log.debug("selective browser close failed: %s", exc)
+            return []
+
     closed: list[str] = []
     for exe in _COOKIE_EXPORT_KILL_EXE:
         try:
@@ -739,11 +773,13 @@ def youtube_cookies_status() -> dict[str, Any]:
     }
 
 
-def refresh_youtube_cookies_file(*, close_browsers: bool = False) -> bool:
+def refresh_youtube_cookies_file(
+    *, close_browsers: bool = False, preserve_broadcast_kiosk: bool = True
+) -> bool:
     """
     Edge/Chrome 쿠키를 cookies.txt 로 저장.
     Windows 에서는 close_browsers=True 권장 (백그라운드 Edge/Chrome 잠금 해제).
-    자동 추출이 실패하면 확장 프로그램으로보낸 cookies.txt 를 default 경로에 두세요.
+    preserve_broadcast_kiosk=True 이면 방송 키오스크(eumbang 프로필)는 종료하지 않음.
     """
     dest = default_youtube_cookies_path()
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -752,7 +788,9 @@ def refresh_youtube_cookies_file(*, close_browsers: bool = False) -> bool:
         return True
 
     if close_browsers:
-        close_browsers_for_cookie_export()
+        close_browsers_for_cookie_export(
+            preserve_broadcast_kiosk=preserve_broadcast_kiosk
+        )
 
     try:
         from yt_dlp.cookies import YDLLogger, extract_cookies_from_browser

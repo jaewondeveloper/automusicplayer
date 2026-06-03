@@ -380,13 +380,16 @@ def open_broadcast_window(
 ) -> bool:
     """방송 키오스크 열기. 기존 창은 모두 닫은 뒤 하나만 연다."""
     with _broadcast_lock:
-        close_broadcast_window()
-        if not wait_until_broadcast_closed(timeout=8.0):
-            get_logger().warning(
-                "broadcast kiosk still running before open — force killing stale processes"
-            )
+        if is_broadcast_window_open():
+            close_broadcast_window()
+            if not wait_until_broadcast_closed(timeout=4.0):
+                get_logger().warning(
+                    "broadcast kiosk still running before open — force killing stale processes"
+                )
+                kill_stale_broadcast_kiosks()
+                wait_until_broadcast_closed(timeout=2.0)
+        else:
             kill_stale_broadcast_kiosks()
-            wait_until_broadcast_closed(timeout=4.0)
 
         query = "kiosk=1"
         if embed_scan:
@@ -400,7 +403,7 @@ def open_broadcast_window(
 
         global _browser_proc
         _browser_proc = proc
-        time.sleep(0.35)
+        time.sleep(0.2)
         stale = list_broadcast_kiosk_pids()
         keep = int(proc.pid)
         if len(stale) > 1 or (len(stale) == 1 and stale[0] != keep):
@@ -512,7 +515,7 @@ def close_broadcast_window() -> None:
             _browser_proc = None
 
         killed = kill_stale_broadcast_kiosks(keep_pid=tracked_pid)
-        wait_until_broadcast_closed(timeout=6.0)
+        wait_until_broadcast_closed(timeout=2.5)
         if killed:
             get_logger().info("closed stale broadcast kiosk processes count=%s", killed)
         get_logger().info("broadcast window closed")

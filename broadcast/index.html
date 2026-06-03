@@ -2028,7 +2028,7 @@
         var mountId = "ytMount_" + Date.now();
         holder.innerHTML = '<div id="' + mountId + '"></div>';
 
-        var waitMs = Math.max(3000, (embedProbeSeconds || 4) * 1000);
+        var waitMs = Math.max(2200, (embedProbeSeconds || 2.5) * 1000);
 
         function startProbePoll(player) {
           clearEmbedScanPoll();
@@ -2151,7 +2151,7 @@
             "검사 완료 (" + embedScanDone + "/" + embedScanTotal + "): " + label,
             0
           );
-          setTimeout(runNextEmbedScan, 350);
+          setTimeout(runNextEmbedScan, 120);
         });
       }
 

@@ -229,27 +229,10 @@ def _process_commands(port: int) -> None:
                     from broadcast_window import (
                         get_broadcast_pid,
                         open_broadcast_window,
-                        wait_until_broadcast_closed,
                     )
                     from win_desktop import focus_process_main_window, minimize_other_windows
 
-                    from youtube_util import refresh_youtube_cookies_file
-
                     enqueue_panel_window_command("minimize")
-                    close_broadcast_window()
-                    if not wait_until_broadcast_closed(timeout=10.0):
-                        setup_panel_logging().warning(
-                            "broadcast kiosk still open after close — retrying force kill"
-                        )
-                        from broadcast_window import kill_stale_broadcast_kiosks
-
-                        kill_stale_broadcast_kiosks()
-                        wait_until_broadcast_closed(timeout=5.0)
-                    if not refresh_youtube_cookies_file(close_browsers=True):
-                        log.warning(
-                            "youtube cookies export failed — "
-                            "close all Edge/Chrome windows, log in to YouTube, retry"
-                        )
                     minimize_other_windows(set())
                     ok[0] = bool(
                         open_broadcast_window(
