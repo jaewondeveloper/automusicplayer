@@ -3101,4 +3101,3 @@ def start_server_thread(port: int) -> threading.Thread:
     t = threading.Thread(target=run_server, args=(port,), daemon=True)
     t.start()
     return t
-                                                                               
