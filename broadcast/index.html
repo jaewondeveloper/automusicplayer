@@ -728,6 +728,9 @@
       var ytApiWatchTimer = null;
       var ytIframeTitleClearTimer = null;
       var activePlaybackMode = "none";
+      var localPlaybackToken = 0;
+      var activeLocalPlaybackKey = "";
+      var pendingYtdlpRequestKey = "";
       var recoveryInProgress = false;
       var lastHeartbeatAt = 0;
       var broadcastWakeLock = null;
@@ -1196,7 +1199,24 @@
         }, waitMs || 12000);
       }
 
+      function bumpLocalPlaybackToken() {
+        localPlaybackToken += 1;
+        return localPlaybackToken;
+      }
+
+      function hardStopLocalVideo() {
+        try {
+          localVideo.pause();
+          localVideo.currentTime = 0;
+          localVideo.removeAttribute("src");
+          localVideo.load();
+        } catch (e) {}
+      }
+
       function stopAllPlayback() {
+        bumpLocalPlaybackToken();
+        activeLocalPlaybackKey = "";
+        pendingYtdlpRequestKey = "";
         clearYtdlpPlaybackWait();
         if (ytApiWatchTimer) {
           clearTimeout(ytApiWatchTimer);
@@ -1206,13 +1226,33 @@
         streamPlaybackActive = false;
         activePlaybackMode = "none";
         destroyYtPlayer();
-        try {
-          localVideo.pause();
-          localVideo.removeAttribute("src");
-          localVideo.load();
-        } catch (e) {}
+        hardStopLocalVideo();
         localVideo.style.display = "none";
         localVideo.muted = true;
+      }
+
+      function isYtdlpServerPlaybackItem(item) {
+        return (
+          !!item &&
+          item.type === "youtube" &&
+          !broadcastYoutubeEmbedOnly &&
+          item.ytdlp_checked &&
+          item.ytdlp_required
+        );
+      }
+
+      function prepareYtdlpPlaybackSlot(item) {
+        stopAllPlayback();
+        destroyYtPlayer();
+        if (ytContainer) ytContainer.style.display = "none";
+        localVideo.style.display = "none";
+        hardStopLocalVideo();
+        hideYtdlpPrepareOverlay();
+        hideExternalPlaybackOverlay();
+        prepareUiForPlayback();
+        songFinishedSent = false;
+        ytErrorRetried = false;
+        currentTrackKey = trackKey(item);
       }
 
       function hidePlayers() {
@@ -1857,32 +1897,22 @@
           socket.emit("song_finished", { index: currentIndex });
           return;
         }
-        if (
-          streamPlaybackActive &&
-          activePlaybackMode === "local" &&
-          playlist[currentIndex] &&
-          playlist[currentIndex].id === item.id
-        ) {
+        var key = trackKey(item);
+        if (activeLocalPlaybackKey === key && isLocalFileVideoPlayback()) {
           return;
         }
+        if (pendingYtdlpRequestKey === key) {
+          return;
+        }
+        pendingYtdlpRequestKey = key;
         streamFallbackRequested = true;
         streamPlaybackActive = false;
-        songFinishedSent = false;
         trackPlayStartedAt = 0;
         clearTrackTimers();
         clearAdvanceRetry();
-        stopAllPlayback();
-        destroyYtPlayer();
-        if (ytContainer) ytContainer.style.display = "none";
-        localVideo.style.display = "block";
-        try {
-          localVideo.removeAttribute("src");
-          localVideo.load();
-        } catch (e) {}
+        prepareYtdlpPlaybackSlot(item);
         if (options.showWaitingOverlay) {
           showExternalPlaybackOverlay(item, "stream");
-        } else {
-          hideExternalPlaybackOverlay();
         }
         socket.emit("request_ytdlp_playback", {
           id: item.id,
@@ -2203,9 +2233,43 @@
       }
 
       function playYoutubeStream(data) {
+        data = data || {};
         clearYtdlpPlaybackWait();
         hideYtdlpPrepareOverlay();
         hideExternalPlaybackOverlay();
+
+        var targetIndex =
+          typeof data.index === "number" && data.index >= 0
+            ? data.index
+            : currentIndex;
+        if (
+          currentIndex >= 0 &&
+          targetIndex >= 0 &&
+          targetIndex !== currentIndex
+        ) {
+          return;
+        }
+        if (typeof data.index === "number" && data.index >= 0) {
+          currentIndex = data.index;
+        }
+        var item = playlist[currentIndex];
+        if (!item) return;
+
+        var videoId = (data.video_id || item.id || "").trim();
+        var url = data.url || "";
+        if (url && url.indexOf("/") === 0) url = ORIGIN + url;
+        var playbackKey =
+          (videoId || "vid") + ":" + currentIndex + ":" + (url || "");
+
+        if (
+          activeLocalPlaybackKey === playbackKey &&
+          isLocalFileVideoPlayback() &&
+          localVideo.src &&
+          !localVideo.paused
+        ) {
+          return;
+        }
+
         if (
           isYoutubeIframePlaying() &&
           !(data && data.local) &&
@@ -2214,26 +2278,21 @@
           streamFallbackRequested = false;
           return;
         }
+
+        pendingYtdlpRequestKey = "";
         stopAllPlayback();
+        var playToken = localPlaybackToken;
+        activeLocalPlaybackKey = playbackKey;
+
         streamFallbackRequested = false;
         streamPlaybackActive = true;
         activePlaybackMode = data && data.local ? "local" : "stream";
         prepareUiForPlayback();
-        hideExternalPlaybackOverlay();
-        hideYtdlpPrepareOverlay();
-        if (typeof data.index === "number" && data.index >= 0) {
-          currentIndex = data.index;
-        }
-        var item = playlist[currentIndex];
-        if (!item) return;
-
         songFinishedSent = false;
         ytErrorRetried = false;
+        currentTrackKey = trackKey(item);
         destroyYtPlayer();
         if (ytContainer) ytContainer.style.display = "none";
-
-        var url = data.url || "";
-        if (url && url.indexOf("/") === 0) url = ORIGIN + url;
 
         localVideo.style.display = "block";
         localVideo.controls = false;
@@ -2243,6 +2302,7 @@
         localVideo.muted = !audioUnlocked;
         localVideo.volume = 1;
         localVideo._ytdlpPlayRetry = false;
+        hardStopLocalVideo();
         localVideo.src = url;
         localVideo.load();
 
@@ -2250,10 +2310,13 @@
         beginTrackPlayback(item);
 
         function tryPlayStream() {
+          if (playToken !== localPlaybackToken) return;
           if (audioUnlocked) {
             localVideo.play().then(function () {
+              if (playToken !== localPlaybackToken) return;
               tryAutoplayWithSound();
             }).catch(function () {
+              if (playToken !== localPlaybackToken) return;
               showAudioUnlockOverlay();
             });
           } else if (KIOSK_MODE) {
@@ -2264,18 +2327,23 @@
         }
 
         localVideo.oncanplay = function () {
+          if (playToken !== localPlaybackToken) return;
           localVideo.oncanplay = null;
           tryPlayStream();
         };
         setTimeout(function () {
+          if (playToken !== localPlaybackToken) return;
           if (localVideo.readyState >= 2) tryPlayStream();
         }, 1200);
         setTimeout(function () {
+          if (playToken !== localPlaybackToken) return;
           if (
             streamPlaybackActive &&
             localVideo.paused &&
-            localVideo.readyState < 2
+            localVideo.readyState < 2 &&
+            pendingYtdlpRequestKey !== trackKey(item)
           ) {
+            pendingYtdlpRequestKey = trackKey(item);
             socket.emit("request_ytdlp_playback", {
               id: item.id,
               index: currentIndex,
@@ -2460,12 +2528,8 @@
             socket.emit("song_finished", { index: currentIndex });
             return;
           }
-          if (
-            !broadcastYoutubeEmbedOnly &&
-            item.ytdlp_checked &&
-            item.ytdlp_required
-          ) {
-            playYtdlpLocal(item, { showWaitingOverlay: false });
+          if (isYtdlpServerPlaybackItem(item)) {
+            prepareYtdlpPlaybackSlot(item);
             return;
           }
           hideYtdlpPrepareOverlay();
@@ -2747,18 +2811,6 @@
         resetBroadcastUi();
         if (ytContainer) ytContainer.style.display = "block";
         socket.emit("request_sync");
-        setTimeout(function () {
-          if (currentIndex >= 0 && playbackStatus === "playing") {
-            playCurrent();
-          } else {
-            socket.emit("request_sync");
-          }
-        }, 350);
-        setTimeout(function () {
-          if (currentIndex >= 0 && playbackStatus === "playing") {
-            socket.emit("request_sync");
-          }
-        }, 1800);
       });
 
       socket.on("ytdlp_download_error", function (data) {
@@ -2891,6 +2943,11 @@
           if (playbackStatus === "stopped" || playbackStatus === "ended") {
             applyBroadcastStoppedUi(wasActive);
           }
+          return;
+        }
+        var item = playlist[currentIndex];
+        if (isYtdlpServerPlaybackItem(item)) {
+          prepareYtdlpPlaybackSlot(item);
           return;
         }
         playCurrent();

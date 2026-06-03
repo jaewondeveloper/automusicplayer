@@ -109,6 +109,29 @@ _embed_scan_pending_payload: dict[str, Any] | None = None
 _embed_scan_client_ready = threading.Event()
 _prep_token = 0
 EMBED_PROBE_SECONDS = 4
+_ytdlp_emit_lock = threading.Lock()
+_last_ytdlp_emit_key: tuple[int, str] | None = None
+
+
+def _clear_ytdlp_emit_cache() -> None:
+    global _last_ytdlp_emit_key
+    with _ytdlp_emit_lock:
+        _last_ytdlp_emit_key = None
+
+
+def _should_emit_ytdlp_playback(index: int, video_id: str) -> bool:
+    """동일 곡 youtube_stream_playback 중복 송출 방지."""
+    global _last_ytdlp_emit_key
+    vid = (video_id or "").strip()
+    key = (int(index), vid)
+    with _ytdlp_emit_lock:
+        if _last_ytdlp_emit_key == key:
+            get_logger().info(
+                "skip duplicate ytdlp playback emit index=%s id=%s", index, vid
+            )
+            return False
+        _last_ytdlp_emit_key = key
+        return True
 
 
 class BroadcastPrepAborted(Exception):
@@ -351,6 +374,7 @@ def _hard_reset_for_broadcast_start() -> None:
     global _embed_scan_results, _embed_scan_broadcast_ready, _embed_scan_pending_payload
 
     _cancel_broadcast_prep()
+    _clear_ytdlp_emit_cache()
     _close_broadcast_window_and_wait()
     try:
         from broadcast_window import close_external_youtube
@@ -450,6 +474,7 @@ def _finalize_broadcast_ended(*, close_window: bool = False) -> None:
     """방송 종료 — 종료 화면 표시 (창은 방송 화면 ESC 두 번째에 닫음)."""
     _cancel_broadcast_prep()
     broadcast_state.stop()
+    _clear_ytdlp_emit_cache()
     bump_stream_generation()
     _emit_now_playing()
     _emit_playback_status()
@@ -561,6 +586,8 @@ def _emit_mux_playback(
     index: int,
 ) -> None:
     """스트림 재생 (/api/youtube/stream) — 캐시는 prefetch가 담당."""
+    if not _should_emit_ytdlp_playback(index, video_id):
+        return
     socketio.emit(
         "youtube_stream_playback",
         {
@@ -610,6 +637,8 @@ def _emit_ytdlp_local_playback(
         )
         return
     dur = float(entry.get("duration") or duration or 0)
+    if not _should_emit_ytdlp_playback(index, video_id):
+        return
     socketio.emit(
         "youtube_stream_playback",
         {
@@ -2925,6 +2954,7 @@ def on_song_finished(data=None):
         _emit_broadcast_track()
         return
 
+    _clear_ytdlp_emit_cache()
     item = broadcast_state.advance_next()
     _emit_now_playing()
     _emit_playback_status()
