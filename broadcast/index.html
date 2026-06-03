@@ -714,8 +714,10 @@
       var ytdlpPrepareRunning = false;
       var ytdlpErrorTimer = null;
       var ytdlpPlaybackWaitTimer = null;
-      /** YouTube는 실제 종료보다 약 1초 일찍 끝나는 경우가 많음 */
+      /** YouTube iframe — 실제 종료보다 약간 일찍 끝나는 경우 */
       var TRACK_END_EARLY_SEC = 2;
+      /** yt-dlp/로컬 파일 — 영상 길이와 동기 (조기 종료 최소화) */
+      var LOCAL_TRACK_END_EARLY_SEC = 0.35;
       var endEarlyTimer = null;
       var advanceRetryTimer = null;
       var YT_STATE_ENDED = 0;
@@ -1499,13 +1501,26 @@
         return (item.type || "") + ":" + (item.id || item.path || "");
       }
 
+      function isLocalFileVideoPlayback() {
+        return (
+          (activePlaybackMode === "local" || activePlaybackMode === "stream") &&
+          localVideo &&
+          !!localVideo.src
+        );
+      }
+
       /** 패널 프로그레스 바와 동일 — 실제 영상 current / duration */
       function getPlaybackProgress() {
         var cur = 0;
         var dur = 0;
         var item = playlist[currentIndex];
         if (!item) return { current: 0, duration: 0 };
-        if (streamPlaybackActive && localVideo && localVideo.src) {
+        if (isLocalFileVideoPlayback()) {
+          if (isFinite(localVideo.currentTime)) cur = localVideo.currentTime || 0;
+          if (isFinite(localVideo.duration) && localVideo.duration > 0) {
+            dur = localVideo.duration;
+          }
+        } else if (streamPlaybackActive && localVideo && localVideo.src) {
           if (isFinite(localVideo.currentTime)) cur = localVideo.currentTime || 0;
           if (isFinite(localVideo.duration)) dur = localVideo.duration || 0;
         } else if (item.type === "youtube" && ytPlayer) {
@@ -1529,10 +1544,17 @@
       function resolveDuration(item) {
         var p = getPlaybackProgress();
         if (p.duration > 0) return p.duration;
-        var d = Number(item && item.duration) || 0;
-        if (d > 0) return d;
-        if (trackDurationSec > 0) return trackDurationSec;
-        return 0;
+        var fileDur = 0;
+        if (
+          isLocalFileVideoPlayback() &&
+          isFinite(localVideo.duration) &&
+          localVideo.duration > 0
+        ) {
+          fileDur = localVideo.duration;
+        }
+        var meta = Number(item && item.duration) || 0;
+        var best = Math.max(meta, fileDur, trackDurationSec);
+        return best > 0 ? best : 0;
       }
 
       function trackRemainingSec(current, duration) {
@@ -1541,9 +1563,20 @@
       }
 
       function shouldFinishTrack(current, duration) {
-        if (duration <= 0 || !hasPlayedEnoughToAdvance()) return false;
+        if (!hasPlayedEnoughToAdvance()) return false;
+        if (isLocalFileVideoPlayback() && localVideo) {
+          if (localVideo.ended) return true;
+          var fileDur = localVideo.duration;
+          if (!isFinite(fileDur) || fileDur <= 0) return false;
+          duration = fileDur;
+          current = localVideo.currentTime || current;
+        }
+        if (duration <= 0) return false;
         if (duration > 10 && current < 3) return false;
-        return trackRemainingSec(current, duration) <= TRACK_END_EARLY_SEC;
+        var early = isLocalFileVideoPlayback()
+          ? LOCAL_TRACK_END_EARLY_SEC
+          : TRACK_END_EARLY_SEC;
+        return trackRemainingSec(current, duration) <= early;
       }
 
       function hasPlayedEnoughToAdvance() {
@@ -1552,6 +1585,9 @@
       }
 
       function isYoutubeEnded() {
+        if (isLocalFileVideoPlayback() && localVideo) {
+          return !!localVideo.ended;
+        }
         if (streamPlaybackActive && localVideo) {
           return !!localVideo.ended;
         }
@@ -1626,9 +1662,18 @@
           }, Math.max(400, (dur - 10) * 1000));
         }
         if (dur > 5) {
+          var fallbackDur = dur;
+          if (
+            isLocalFileVideoPlayback() &&
+            isFinite(localVideo.duration) &&
+            localVideo.duration > fallbackDur
+          ) {
+            fallbackDur = localVideo.duration;
+          }
+          var margin = isLocalFileVideoPlayback() ? 12 : 4;
           endFallbackTimer = setTimeout(function () {
             if (!songFinishedSent) onTrackEnded();
-          }, (dur + 4) * 1000);
+          }, (fallbackDur + margin) * 1000);
         }
       }
 
@@ -2171,7 +2216,7 @@
         }
         stopAllPlayback();
         streamFallbackRequested = false;
-        streamPlaybackActive = !(data && data.local);
+        streamPlaybackActive = true;
         activePlaybackMode = data && data.local ? "local" : "stream";
         prepareUiForPlayback();
         hideExternalPlaybackOverlay();
@@ -2439,6 +2484,7 @@
         } else {
           stopAllPlayback();
           activePlaybackMode = "local";
+          streamPlaybackActive = true;
           if (ytContainer) ytContainer.style.display = "none";
           localVideo.style.display = "block";
           localVideo.muted = false;
@@ -2505,7 +2551,7 @@
       });
 
       localVideo.addEventListener("playing", function () {
-        if (!streamPlaybackActive) return;
+        if (!isLocalFileVideoPlayback() && !streamPlaybackActive) return;
         trackPlayStartedAt = Date.now();
         emitPlaybackHeartbeat();
       });
@@ -2513,13 +2559,23 @@
       localVideo.addEventListener("timeupdate", function () {
         var item = playlist[currentIndex];
         if (!item) return;
+        if (isLocalFileVideoPlayback()) {
+          syncPlaybackProgress();
+          return;
+        }
         if (item.type === "youtube" && !streamPlaybackActive) return;
         syncPlaybackProgress();
       });
 
       function emitProgress(current, duration) {
-        if (!duration) return;
-        socket.emit("playback_progress", { current: current, duration: duration, index: currentIndex });
+        var dur = Number(duration) || 0;
+        if (dur <= 0 && trackDurationSec > 0) dur = trackDurationSec;
+        if (dur <= 0) return;
+        socket.emit("playback_progress", {
+          current: current,
+          duration: dur,
+          index: currentIndex,
+        });
       }
 
       function checkNextAlert(current, duration) {
@@ -2595,16 +2651,30 @@
       });
 
       socket.on("playback_seek", function (data) {
+        if (
+          typeof data.index === "number" &&
+          data.index >= 0 &&
+          data.index !== currentIndex
+        ) {
+          return;
+        }
         var sec = Math.max(0, Number(data && data.seconds) || 0);
-        if (streamPlaybackActive && localVideo) {
+        if (isLocalFileVideoPlayback() || (streamPlaybackActive && localVideo && localVideo.src)) {
           try {
+            var maxDur = localVideo.duration || trackDurationSec || 0;
+            if (maxDur > 0) sec = Math.min(sec, maxDur);
             localVideo.currentTime = sec;
+            var prog = getPlaybackProgress();
+            emitProgress(sec, prog.duration || trackDurationSec);
+            tickProgress();
           } catch (e) {}
           return;
         }
         if (ytPlayer && ytPlayer.seekTo) {
           try {
             ytPlayer.seekTo(sec, true);
+            var yp = getPlaybackProgress();
+            emitProgress(sec, yp.duration || trackDurationSec);
           } catch (e) {}
         }
       });

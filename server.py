@@ -225,7 +225,7 @@ def _close_broadcast_window() -> None:
         broadcast_command_queue.put({"action": "close_broadcast"})
 
 
-def _close_broadcast_window_and_wait(timeout: float = 20.0) -> None:
+def _close_broadcast_window_and_wait(timeout: float = 28.0) -> None:
     if not broadcast_command_queue:
         return
     done = threading.Event()

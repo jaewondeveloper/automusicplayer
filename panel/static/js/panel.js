@@ -38,6 +38,21 @@
   let playbackDurationSec = 0;
   let isScrubbingProgress = false;
 
+  function effectivePlaybackDurationSec() {
+    const dur = Number(playbackDurationSec) || 0;
+    if (dur > 0) return dur;
+    const item = playlist[currentIndex];
+    if (item && Number(item.duration) > 0) return Number(item.duration);
+    return 0;
+  }
+
+  function syncPanelDurationFromItem() {
+    const item = playlist[currentIndex];
+    if (item && Number(item.duration) > 0) {
+      playbackDurationSec = Number(item.duration);
+    }
+  }
+
   let ytdlpBatchRunning = false;
   let ytdlpPrepareModalDismissed = false;
 
@@ -154,6 +169,10 @@
       }
       renderPlaylist();
       updatePauseButton();
+      syncPanelDurationFromItem();
+      if (!isScrubbingProgress) {
+        updateProgressBar(playbackCurrentSec, effectivePlaybackDurationSec());
+      }
     });
     socket.on("ytdlp_scan_progress", (data) => {
       if (!data) return;
@@ -172,7 +191,10 @@
       const title = data.title || "재생 중인 곡 없음";
       $("#nowTitle").textContent = title;
       playbackCurrentSec = 0;
-      if (!isScrubbingProgress) updateProgressBar(0, playbackDurationSec);
+      syncPanelDurationFromItem();
+      if (!isScrubbingProgress) {
+        updateProgressBar(0, effectivePlaybackDurationSec());
+      }
       renderPlaylist();
     });
 
@@ -206,14 +228,22 @@
     });
 
     socket.on("playback_progress", (data) => {
-      if (!data || !data.duration) return;
+      if (!data) return;
       if (typeof data.index === "number" && data.index >= 0) {
         currentIndex = data.index;
       }
-      playbackCurrentSec = Number(data.current) || 0;
-      playbackDurationSec = Number(data.duration) || 0;
+      const cur = Number(data.current);
+      const dur = Number(data.duration);
+      if (Number.isFinite(cur) && cur >= 0) playbackCurrentSec = cur;
+      if (Number.isFinite(dur) && dur > 0) {
+        playbackDurationSec = dur;
+      } else {
+        syncPanelDurationFromItem();
+      }
+      const effDur = effectivePlaybackDurationSec();
+      if (!effDur) return;
       if (!isScrubbingProgress) {
-        updateProgressBar(playbackCurrentSec, playbackDurationSec);
+        updateProgressBar(playbackCurrentSec, effDur);
       }
     });
 
@@ -273,7 +303,17 @@
     const rect = track.getBoundingClientRect();
     if (!rect.width) return 0;
     const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    return ratio * playbackDurationSec;
+    return ratio * effectivePlaybackDurationSec();
+  }
+
+  function canScrubPlayback() {
+    return (
+      socket &&
+      socket.connected &&
+      effectivePlaybackDurationSec() > 0 &&
+      (playbackStatus === "playing" || playbackStatus === "paused") &&
+      currentIndex >= 0
+    );
   }
 
   function initProgressScrub() {
@@ -291,14 +331,15 @@
         /* ignore */
       }
       const sec = seekSecondsFromPointer(track, e.clientX);
-      updateProgressBar(sec, playbackDurationSec);
-      if (socket && socket.connected && playbackDurationSec > 0) {
+      const effDur = effectivePlaybackDurationSec();
+      updateProgressBar(sec, effDur);
+      if (canScrubPlayback()) {
         socket.emit("control", { action: "seek", seconds: sec });
       }
     };
 
     track.addEventListener("pointerdown", (e) => {
-      if (!playbackDurationSec || playbackDurationSec <= 0) return;
+      if (!canScrubPlayback()) return;
       if (e.button !== 0 && e.pointerType === "mouse") return;
       isScrubbingProgress = true;
       track.classList.add("scrubbing");
@@ -308,14 +349,14 @@
         /* ignore */
       }
       const sec = seekSecondsFromPointer(track, e.clientX);
-      updateProgressBar(sec, playbackDurationSec);
+      updateProgressBar(sec, effectivePlaybackDurationSec());
       e.preventDefault();
     });
 
     track.addEventListener("pointermove", (e) => {
       if (!isScrubbingProgress) return;
       const sec = seekSecondsFromPointer(track, e.clientX);
-      updateProgressBar(sec, playbackDurationSec);
+      updateProgressBar(sec, effectivePlaybackDurationSec());
     });
 
     track.addEventListener("pointerup", endScrub);
