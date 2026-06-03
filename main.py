@@ -11,6 +11,12 @@ import sys
 import threading
 import time
 
+# 스크립트 실행 시 작업 폴더가 프로젝트 루트가 아니어도 server 등 로컬 모듈 import 가능
+if not getattr(sys, "frozen", False):
+    _app_root = os.path.dirname(os.path.abspath(__file__))
+    if _app_root and _app_root not in sys.path:
+        sys.path.insert(0, _app_root)
+
 if getattr(sys, "frozen", False):
     multiprocessing.freeze_support()
 

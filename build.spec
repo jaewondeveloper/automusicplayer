@@ -74,8 +74,11 @@ for pkg in ("yt_dlp", "yt_dlp_ejs", "imageio_ffmpeg", "Cryptodome", "certifi", "
 
 # 앱 전용 모듈 (Analysis 가 놓치기 쉬운 항목)
 _APP_MODULES = (
+    "server",
     "playback_recovery",
     "youtube_download_cache",
+    "youtube_dash_mux",
+    "youtube_prefetch",
     "website_server",
     "network_utils",
     "cloudflare_sync",
